@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AdRewards</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --primary-color: #2ecc71;
+      --primary-dark: #27ae60;
+      --primary-light: #58d68d;
+      --bg-color: #f5f9f7;
+      --card-color: #ffffff;
+      --text-color: #2c3e50;
+      --secondary-text: #7f8c8d;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-color: #1a2e22;
+        --card-color: #2c3e50;
+        --text-color: #ecf0f1;
+        --secondary-text: #bdc3c7;
+      }
+    }
+
+    body {
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+    }
+
+    .container {
+      padding: 20px;
+      max-width: 500px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background-color: var(--card-color);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .btn {
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 16px 24px;
+      margin: 12px 0;
+      width: 100%;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background-color: var(--card-color);
+      color: var(--primary-color);
+      border: 2px solid var(--primary-color);
+    }
+
+    .btn-disabled {
+      background-color: var(--secondary-text);
+    }
+
+    .reject-btn {
+      background-color: #e74c3c;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .balance {
+      text-align: center;
+      margin: 25px 0;
+    }
+
+    .balance-amount {
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--primary-color);
+      margin: 10px 0;
+    }
+
+    .balance-label {
+      font-size: 16px;
+      color: var(--secondary-text);
+    }
+
+    .progress-container {
+      margin: 20px 0;
+    }
+
+    .progress-bar {
+      height: 8px;
+      background: var(--bg-color);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--primary-color);
+      width: 0%;
+      transition: width 0.3s;
+    }
+
+    .progress-text {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .referral-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 20px 0;
+    }
+
+    .stat-card {
+      background-color: var(--bg-color);
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .referral-link {
+      background-color: var(--bg-color);
+      border-radius: 12px;
+      padding: 16px;
+      word-break: break-all;
+      text-align: center;
+      margin: 20px 0;
+    }
+
+    .withdrawal-item {
+      border: 1px solid var(--bg-color);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .admin-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .approve-btn {
+      background-color: #2ecc71;
+      color: white;
+      border: none;
+      padding: 8px;
+      border-radius: 6px;
+      flex: 1;
+      cursor: pointer;
+    }
+
+    .reject-btn {
+      background-color: #e74c3c;
+      color: white;
+      border: none;
+      padding: 8px;
+      border-radius: 6px;
+      flex: 1;
+      cursor: pointer;
+    }
+
+    .task {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--bg-color);
+    }
+
+    .admin-task {
+      margin-bottom: 15px;
+      padding: 15px;
+      background: rgba(0,0,0,0.05);
+      border-radius: 8px;
+    }
+
+    #secret-admin-btn {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      width: 40px;
+      height: 40px;
+      opacity: 0.05;
+      cursor: pointer;
+      z-index: 1000;
+      background: transparent;
+      border: none;
+    }
+
+    #splash-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, var(--primary-dark), var(--primary-color));
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      transition: opacity 0.5s;
+    }
+
+    .splash-logo {
+      width: 120px;
+      height: 120px;
+      background-color: white;
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 30px;
+      animation: pulse 1.5s infinite;
+    }
+
+    .splash-logo svg {
+      width: 60px;
+      height: 60px;
+      fill: var(--primary-dark);
+    }
+
+    .splash-text {
+      color: white;
+      font-size: 28px;
+      font-weight: 600;
+      margin-top: 20px;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #admin-login {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      z-index: 1001;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #admin-panel {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg-color);
+      z-index: 1000;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    textarea {
+      width: 100%;
+      padding: 14px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--bg-color);
+      font-family: inherit;
+    }
+
+    .status-badge {
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 8px;
+    }
+
+    .status-pending {
+      background-color: #f39c12;
+      color: white;
+    }
+
+    .status-completed {
+      background-color: #2ecc71;
+      color: white;
+    }
+
+    .status-rejected {
+      background-color: #e74c3c;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <!-- Заставка -->
+  <div id="splash-screen">
+    <div class="splash-logo">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+      </svg>
+    </div>
+    <div class="splash-text">AdRewards</div>
+  </div>
+
+  <!-- Основной интерфейс -->
+  <div class="container">
+    <div class="card">
+      <div class="balance">
+        <div class="balance-label">Ваш баланс</div>
+        <div class="balance-amount" id="balance">$0.000</div>
+      </div>
+
+      <button class="btn" id="watch-ad-btn" onclick="startAd()">
+        🎥 Смотреть рекламу (+$0.0003)
+      </button>
+
+      <div class="progress-container">
+        <div class="progress-text">
+          <span>Просмотров: <span id="ad-counter">0</span>/30</span>
+          <span id="ad-timer"></span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="ad-progress"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <button class="btn" onclick="showWithdrawForm()">
+        💳 Вывести средства
+      </button>
+
+      <button class="btn btn-secondary" onclick="showReferralCard()">
+        👥 Реферальная программа
+      </button>
+
+      <button class="btn btn-secondary" onclick="showTasksCard()">
+        🎯 Задания
+      </button>
+
+      <div id="withdraw-form" style="display:none; margin-top:20px;">
+        <input type="text" id="wallet" placeholder="PAYEER кошелек (P1234567)" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <input type="number" id="amount" placeholder="Сумма ($1+)" min="1" step="0.01" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <button class="btn" onclick="submitWithdrawal()">Отправить заявку</button>
+      </div>
+
+      <div id="referral-card" style="display:none;">
+        <div class="referral-stats">
+          <div class="stat-card">
+            <div class="stat-value" id="referral-count">0</div>
+            <div>Приглашено</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">$<span id="referral-earnings">0.000</span></div>
+            <div>Ваш бонус</div>
+          </div>
+        </div>
+
+        <p style="text-align: center; margin: 20px 0;">За каждого приглашенного друга вы получаете <strong>15%</strong> от его выводов!</p>
+
+        <div class="referral-link" id="referral-link"></div>
+        <button class="btn" onclick="copyReferralLink()">Копировать ссылку</button>
+      </div>
+
+      <div id="tasks-card" style="display:none;">
+        <h2 style="margin-top: 0;">🎯 Доступные задания</h2>
+        <div id="tasks-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Скрытая кнопка админ-панели (невидимая) -->
+  <button id="secret-admin-btn" title="Админ-панель"></button>
+
+  <!-- Админ-панель -->
+  <div id="admin-login" class="hidden">
+    <div class="card" style="max-width:400px; width:100%;">
+      <h2 style="margin-top:0; text-align:center;">Админ-доступ</h2>
+      <input type="password" id="admin-password" placeholder="Введите пароль" style="width:100%; padding:14px; margin:12px 0; border-radius:8px; border:1px solid var(--bg-color);">
+      <button class="btn" onclick="checkAdminPassword()" style="width:100%;">Войти</button>
+      <button class="btn btn-secondary" onclick="hideAdminLogin()" style="width:100%; margin-top:10px;">Отмена</button>
+    </div>
+  </div>
+
+  <div id="admin-panel" class="hidden">
+    <div class="card">
+      <h2 style="margin-top:0; display:flex; justify-content:space-between; align-items:center;">
+        <span>Админ-панель</span>
+        <button onclick="hideAdminPanel()" style="background:none; border:none; font-size:20px; cursor:pointer;">✕</button>
+      </h2>
+
+      <h3>Заявки на вывод</h3>
+      <div class="admin-actions" style="margin-bottom: 15px;">
+        <button class="btn" onclick="loadWithdrawals('pending')">Ожидающие</button>
+        <button class="btn btn-secondary" onclick="loadWithdrawals('completed')">Завершенные</button>
+        <button class="btn btn-secondary" onclick="loadWithdrawals('rejected')">Отклоненные</button>
+      </div>
+      <div id="withdrawals-list" style="max-height:40vh; overflow-y:auto; margin-bottom: 20px;"></div>
+
+      <h3>Управление заданиями</h3>
+      <div id="admin-tasks">
+        <input type="text" id="new-task-title" placeholder="Название задания" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <input type="number" id="new-task-reward" placeholder="Награда ($)" step="0.01" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <textarea id="new-task-desc" placeholder="Описание задания" rows="3"></textarea>
+        <input type="text" id="new-task-url" placeholder="Ссылка (https://...)" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <input type="number" id="new-task-cooldown" placeholder="Таймер (секунды)" value="10" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <button class="btn" onclick="addTask()">Добавить задание</button>
+
+        <div id="current-tasks" style="margin-top: 20px;"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// Конфигурация с улучшенной защитой
+const CONFIG = {
+  rewardPerAd: 0.0003, // $0.0003 за просмотр
+  hourlyLimit: 30,      // 30 просмотров
+  minWithdraw: 1.00,    // Минимальный вывод $1
+  referralPercent: 0.15,// 15% реферальных
+  adminPassword: "8223Nn8223",
+  adCooldown: 10,       // 10 сек между просмотрами
+  cooldown: 10800,      // 3 часа (10800 сек) сброс лимита
+  security: {
+    antiCheat: true,
+    dataSigning: true,
+    secretSalt: "d2h5IHNvIHNlcmlvdXM/" 
+  }
+};
+
+// Глобальные задачи (хранятся отдельно)
+let GLOBAL_TASKS = [];
+
+// Состояние приложения с защитой
+const state = {
+  userId: null,
+  balance: 0,
+  adViews: 0,
+  isAdBlocked: false,
+  lastAdTime: 0,
+  isAdmin: false,
+  referrals: 0,
+  referralEarnings: 0,
+  referrer: null,
+  activeTask: null,
+  taskStartTime: 0,
+  completedTasks: [],
+  withdrawals: [],
+  _security: {
+    lastHash: null,
+    timers: {}
+  }
+};
+
+// Улучшенная система хранения с защитой
+const SecureStorage = {
+  async set(key, value) {
+    if (CONFIG.security.dataSigning) {
+      value._signature = await this._generateSignature(value);
+      value._timestamp = Date.now();
+    }
+    localStorage.setItem(key, JSON.stringify(value));
+  },
+
+  async get(key) {
+    const data = JSON.parse(localStorage.getItem(key));
+    if (!data) return null;
+
+    if (CONFIG.security.dataSigning) {
+      if (!await this._verifySignature(data)) {
+        console.error("Обнаружена подмена данных!");
+        return null;
+      }
+    }
+    return data;
+  },
+
+  list(prefix) {
+    const result = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key.startsWith(prefix)) {
+          const data = JSON.parse(localStorage.getItem(key));
+          if (data) result.push(data);
+        }
+      }
+    } catch (e) {
+      console.error('Storage list error:', e);
+    }
+    return result;
+  },
+
+  async _generateSignature(data) {
+    const str = JSON.stringify(data) + CONFIG.security.secretSalt;
+    const encoder = new TextEncoder();
+    const hash = await crypto.subtle.digest('SHA-256', encoder.encode(str));
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  async _verifySignature(data) {
+    const signature = data._signature;
+    delete data._signature; // Удаляем перед проверкой
+    const check = await this._generateSignature(data);
+    data._signature = signature; // Возвращаем обратно
+    return signature === check;
+  }
+};
+
+// Защита от накрутки
+const AntiCheat = {
+  checkTimeManipulation() {
+    const realTime = new Date().getTime();
+    const clientTime = Date.now();
+    return Math.abs(realTime - clientTime) > 10000;
+  },
+
+  checkFrequency(action, delay) {
+    const now = Date.now();
+    if (!state._security.timers[action]) {
+      state._security.timers[action] = now;
+      return true;
+    }
+
+    if (now - state._security.timers[action] < delay) {
+      return false;
+    }
+
+    state._security.timers[action] = now;
+    return true;
+  }
+};
+
+// ====== Функции для работы с заявками на вывод ======
+async function loadWithdrawals(filter = 'pending') {
+  const withdrawals = SecureStorage.list('withdrawal_');
+  const filtered = withdrawals.filter(w => w.status === filter);
+
+  const container = document.getElementById('withdrawals-list');
+  container.innerHTML = '';
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет заявок</p>';
+    return;
+  }
+
+  filtered.forEach(withdrawal => {
+    const item = document.createElement('div');
+    item.className = 'withdrawal-item';
+
+    const userData = SecureStorage.get(withdrawal.userId) || { balance: 0 };
+
+    item.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <strong>#${withdrawal.id}</strong>
+        <div>
+          <span>$${withdrawal.amount.toFixed(2)}</span>
+          <span class="status-badge status-${withdrawal.status}">${getStatusText(withdrawal.status)}</span>
+        </div>
+      </div>
+      <div style="margin: 8px 0; font-size: 14px;">
+        <div>Кошелек: ${withdrawal.wallet}</div>
+        <div>Пользователь: ${withdrawal.userId}</div>
+        <div>Баланс: $${userData.balance.toFixed(2)}</div>
+        <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
+      </div>
+      ${withdrawal.status === 'pending' ? `
+      <div class="admin-actions">
+        <button class="approve-btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">Оплатить</button>
+        <button class="reject-btn" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">Отклонить</button>
+      </div>
+      ` : ''}
+    `;
+
+    container.appendChild(item);
+  });
+}
+
+function getStatusText(status) {
+  const statusMap = {
+    'pending': 'Ожидает',
+    'completed': 'Оплачено',
+    'rejected': 'Отклонено'
+  };
+  return statusMap[status] || status;
+}
+
+async function processWithdrawal(id, action) {
+  const withdrawal = await SecureStorage.get('withdrawal_' + id);
+  if (!withdrawal) return;
+
+  if (action === 'completed') {
+    withdrawal.status = 'completed';
+    await SecureStorage.set('withdrawal_' + id, withdrawal);
+    alert(`Заявка #${id} оплачена!`);
+  } 
+  else if (action === 'rejected') {
+    const userData = await SecureStorage.get(withdrawal.userId);
+    if (userData) {
+      userData.balance += withdrawal.amount; // Возвращаем средства
+      await SecureStorage.set(withdrawal.userId, userData);
+    }
+
+    withdrawal.status = 'rejected';
+    await SecureStorage.set('withdrawal_' + id, withdrawal);
+    alert(`Заявка #${id} отклонена! Средства возвращены.`);
+  }
+
+  loadWithdrawals('pending');
+}
+
+// ====== Функции заданий ======
+async function loadGlobalTasks() {
+  const tasks = await SecureStorage.get('global_tasks');
+  if (tasks && tasks.length > 0) {
+    GLOBAL_TASKS = tasks;
+  } else {
+    GLOBAL_TASKS = [];
+    await SecureStorage.set('global_tasks', GLOBAL_TASKS);
+  }
+}
+
+function showTasksCard() {
+  document.getElementById('tasks-card').style.display = 'block';
+  document.getElementById('withdraw-form').style.display = 'none';
+  document.getElementById('referral-card').style.display = 'none';
+  renderTasks();
+}
+
+function renderTasks() {
+  const container = document.getElementById('tasks-list');
+  container.innerHTML = '';
+
+  if (GLOBAL_TASKS.length === 0) {
+    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет доступных заданий</p>';
+    return;
+  }
+
+  GLOBAL_TASKS.forEach(task => {
+    const isCompleted = state.completedTasks.includes(task.id);
+
+    const taskEl = document.createElement('div');
+    taskEl.className = 'task';
+    taskEl.innerHTML = `
+      <h3>${task.title} ($${task.reward.toFixed(2)})</h3>
+      <p style="white-space: pre-line;">${task.description}</p>
+      <button 
+        onclick="startTask('${task.id}')" 
+        ${isCompleted ? 'disabled' : ''}
+        class="btn ${isCompleted ? 'btn-disabled' : ''}"
+      >
+        ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
+      </button>
+    `;
+    container.appendChild(taskEl);
+  });
+}
+
+async function startTask(taskId) {
+  if (CONFIG.security.antiCheat && AntiCheat.checkTimeManipulation()) {
+    alert("Обнаружена попытка обмана системы!");
+    resetToDefault();
+    return;
+  }
+
+  const task = GLOBAL_TASKS.find(t => t.id === taskId);
+
+  if (!task) {
+    alert("Задание не найдено!");
+    return;
+  }
+
+  if (state.completedTasks.includes(taskId)) {
+    alert("Вы уже выполнили это задание!");
+    return;
+  }
+
+  state.activeTask = taskId;
+  state.taskStartTime = Date.now();
+  await saveState();
+
+  window.open(task.url, '_blank');
+  alert(`У вас есть ${task.cooldown} секунд на выполнение! Вернитесь после этого.`);
+}
+
+async function checkActiveTask() {
+  if (state.activeTask) {
+    const task = GLOBAL_TASKS.find(t => t.id === state.activeTask);
+    if (!task) {
+      state.activeTask = null;
+      return;
+    }
+
+    const timePassed = (Date.now() - state.taskStartTime) / 1000;
+
+    if (timePassed >= task.cooldown) {
+      await completeTask(state.activeTask);
+    } else {
+      alert(`Вернитесь через ${Math.ceil(task.cooldown - timePassed)} секунд!`);
+    }
+  }
+}
+
+async function completeTask(taskId) {
+  const task = GLOBAL_TASKS.find(t => t.id === taskId);
+
+  if (!task) {
+    alert("Задание не найдено!");
+    return;
+  }
+
+  state.balance += task.reward;
+  state.completedTasks.push(taskId);
+  state.activeTask = null;
+  await saveState();
+
+  alert(`✅ Задание выполнено! +$${task.reward.toFixed(2)}`);
+  updateUI();
+  renderTasks();
+}
+
+// ====== Админ-панель ======
+function showAdminLogin() {
+  document.getElementById('admin-login').classList.remove('hidden');
+}
+
+function hideAdminLogin() {
+  document.getElementById('admin-login').classList.add('hidden');
+  document.getElementById('admin-password').value = '';
+}
+
+async function checkAdminPassword() {
+  const password = document.getElementById('admin-password').value;
+  if (password === CONFIG.adminPassword) {
+    state.isAdmin = true;
+    hideAdminLogin();
+    document.getElementById('admin-panel').classList.remove('hidden');
+    loadWithdrawals();
+    renderAdminTasks();
+  } else {
+    alert("Неверный пароль!");
+    document.getElementById('admin-password').value = '';
+  }
+}
+
+function hideAdminPanel() {
+  document.getElementById('admin-panel').classList.add('hidden');
+}
+
+async function renderAdminTasks() {
+  await loadGlobalTasks();
+  const container = document.getElementById('current-tasks');
+  container.innerHTML = '';
+
+  if (GLOBAL_TASKS.length === 0) {
+    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет созданных заданий</p>';
+    return;
+  }
+
+  GLOBAL_TASKS.forEach((task, index) => {
+    const taskEl = document.createElement('div');
+    taskEl.className = 'admin-task';
+    taskEl.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <strong>${task.title}</strong>
+        <button onclick="deleteTask(${index})" class="reject-btn">Удалить</button>
+      </div>
+      <p style="white-space: pre-line; margin: 8px 0;">${task.description}</p>
+      <div style="display: flex; justify-content: space-between;">
+        <span>Награда: $${task.reward.toFixed(2)}</span>
+        <span>Таймер: ${task.cooldown} сек</span>
+      </div>
+    `;
+    container.appendChild(taskEl);
+  });
+}
+
+async function addTask() {
+  const newTask = {
+    id: 'task_' + Date.now(),
+    title: document.getElementById('new-task-title').value,
+    reward: parseFloat(document.getElementById('new-task-reward').value),
+    description: document.getElementById('new-task-desc').value,
+    url: document.getElementById('new-task-url').value,
+    cooldown: parseInt(document.getElementById('new-task-cooldown').value)
+  };
+
+  if (!newTask.title || !newTask.reward || !newTask.description || !newTask.url) {
+    alert("Заполните все поля!");
+    return;
+  }
+
+  GLOBAL_TASKS.push(newTask);
+  await SecureStorage.set('global_tasks', GLOBAL_TASKS);
+
+  // Очищаем поля
+  document.getElementById('new-task-title').value = '';
+  document.getElementById('new-task-reward').value = '';
+  document.getElementById('new-task-desc').value = '';
+  document.getElementById('new-task-url').value = '';
+  document.getElementById('new-task-cooldown').value = '10';
+
+  renderAdminTasks();
+  alert("Задание добавлено и доступно всем пользователям!");
+}
+
+async function deleteTask(index) {
+  GLOBAL_TASKS.splice(index, 1);
+  await SecureStorage.set('global_tasks', GLOBAL_TASKS);
+  renderAdminTasks();
+  alert("Задание удалено!");
+}
+
+// ====== Основные функции ======
+async function initUser() {
+  if (window.Telegram && Telegram.WebApp.initDataUnsafe?.user?.id) {
+    state.userId = 'tg_' + Telegram.WebApp.initDataUnsafe.user.id;
+  } else {
+    state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+  }
+
+  await loadState();
+}
+
+async function loadState() {
+  const saved = await SecureStorage.get(state.userId);
+  if (saved) {
+    Object.assign(state, saved);
+
+    // Проверяем, прошло ли 3 часа с последнего просмотра
+    if (state.lastAdTime && (Date.now() - new Date(state.lastAdTime).getTime() > 10800000)) {
+      state.adViews = 0;
+      state.isAdBlocked = false;
+      state.adTimer = 0;
+    }
+  }
+
+  checkReferral();
+  updateUI();
+}
+
+function checkReferral() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const ref = urlParams.get('ref');
+  if (ref && !state.referrer && ref !== state.userId) {
+    state.referrer = ref;
+    const referrerData = SecureStorage.get(ref);
+    if (referrerData) {
+      referrerData.referrals += 1;
+      SecureStorage.set(ref, referrerData);
+    }
+    saveState();
+  }
+}
+
+async function saveState() {
+  await SecureStorage.set(state.userId, {
+    balance: state.balance,
+    adViews: state.adViews,
+    isAdBlocked: state.isAdBlocked,
+    adTimer: state.adTimer,
+    lastAdTime: state.lastAdTime,
+    referrals: state.referrals,
+    referralEarnings: state.referralEarnings,
+    referrer: state.referrer,
+    activeTask: state.activeTask,
+    taskStartTime: state.taskStartTime,
+    completedTasks: state.completedTasks,
+    lastAdTimestamp: state.lastAdTimestamp
+  });
+}
+
+function updateUI() {
+  document.getElementById('balance').textContent = '$' + state.balance.toFixed(3);
+  document.getElementById('ad-counter').textContent = state.adViews;
+  document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.hourlyLimit) * 100}%`;
+  document.getElementById('referral-count').textContent = state.referrals;
+  document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
+  document.getElementById('referral-link').textContent = `${window.location.href.split('?')[0]}?ref=${state.userId}`;
+
+  const btn = document.getElementById('watch-ad-btn');
+  btn.disabled = state.isAdBlocked;
+
+  if (state.isAdBlocked) {
+    const mins = Math.floor(state.adTimer / 60);
+    const secs = state.adTimer % 60;
+    document.getElementById('ad-timer').textContent = `Доступно через: ${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  } else {
+    document.getElementById('ad-timer').textContent = '';
+  }
+}
+
+async function startAd() {
+  if (CONFIG.security.antiCheat) {
+    if (AntiCheat.checkTimeManipulation()) {
+      alert("Обнаружена попытка обмана системы!");
+      resetToDefault();
+      return;
+    }
+
+    if (!AntiCheat.checkFrequency('ad_view', CONFIG.adCooldown * 1000)) {
+      alert(`Подождите ${CONFIG.adCooldown} секунд!`);
+      return;
+    }
+  }
+
+  const now = Date.now();
+  const timeSinceLastAd = (now - state.lastAdTimestamp) / 1000;
+
+  if (timeSinceLastAd < CONFIG.adCooldown) {
+    const remainingTime = Math.ceil(CONFIG.adCooldown - timeSinceLastAd);
+    alert(`Подождите еще ${remainingTime} секунд перед следующим просмотром рекламы.`);
+    return;
+  }
+
+  if (state.isAdBlocked) {
+    const mins = Math.floor(state.adTimer / 60);
+    const secs = state.adTimer % 60;
+    alert(`Вы исчерпали лимит просмотров. Попробуйте через ${mins}:${secs < 10 ? '0' : ''}${secs}`);
+    return;
+  }
+
+  const btn = document.getElementById('watch-ad-btn');
+  btn.disabled = true;
+  btn.textContent = "⏳ Идет показ рекламы...";
+
+  setTimeout(async () => {
+    if (Math.random() < 0.8) {
+      await completeAdView();
+    } else {
+      btn.textContent = "🎥 Смотреть рекламу (+$0.0003)";
+      btn.disabled = false;
+      alert("Реклама не была досмотрена. Попробуйте еще раз.");
+    }
+  }, 5000);
+}
+
+async function completeAdView() {
+  const now = Date.now();
+  state.lastAdTimestamp = now;
+  state.adViews++;
+  state.balance += CONFIG.rewardPerAd;
+  state.lastAdTime = new Date().toISOString();
+
+  if (state.adViews >= CONFIG.hourlyLimit) {
+    state.isAdBlocked = true;
+    state.adTimer = CONFIG.cooldown;
+
+    // Запускаем таймер сброса лимита
+    setTimeout(() => {
+      state.adViews = 0;
+      state.isAdBlocked = false;
+      state.adTimer = 0;
+      saveState();
+      updateUI();
+    }, CONFIG.cooldown * 1000);
+  }
+
+  await saveState();
+  updateUI();
+
+  document.getElementById('watch-ad-btn').textContent = "🎥 Смотреть рекламу (+$0.0003)";
+  alert(`+$${CONFIG.rewardPerAd.toFixed(3)} за просмотр!`);
+
+  startAdCooldownTimer();
+}
+
+function startAdCooldownTimer() {
+  const btn = document.getElementById('watch-ad-btn');
+  btn.disabled = true;
+
+  let remaining = CONFIG.adCooldown;
+  updateAdButtonText(remaining);
+
+  const timer = setInterval(() => {
+    remaining--;
+    updateAdButtonText(remaining);
+
+    if (remaining <= 0) {
+      clearInterval(timer);
+      btn.disabled = state.isAdBlocked;
+      btn.textContent = "🎥 Смотреть рекламу (+$0.0003)";
+    }
+  }, 1000);
+}
+
+function updateAdButtonText(seconds) {
+  const btn = document.getElementById('watch-ad-btn');
+  btn.textContent = `⌛ Доступно через: ${seconds} сек`;
+}
+
+function showWithdrawForm() {
+  if (state.balance < CONFIG.minWithdraw) {
+    alert(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
+    return;
+  }
+  document.getElementById('withdraw-form').style.display = 'block';
+  document.getElementById('referral-card').style.display = 'none';
+  document.getElementById('tasks-card').style.display = 'none';
+}
+
+function showReferralCard() {
+  document.getElementById('referral-card').style.display = 'block';
+  document.getElementById('withdraw-form').style.display = 'none';
+  document.getElementById('tasks-card').style.display = 'none';
+}
+
+function copyReferralLink() {
+  const link = document.getElementById('referral-link').textContent;
+  navigator.clipboard.writeText(link).then(() => {
+    alert("Реферальная ссылка скопирована в буфер обмена!");
+  });
+}
+
+async function submitWithdrawal() {
+  const wallet = document.getElementById('wallet').value.trim();
+  const amount = parseFloat(document.getElementById('amount').value);
+
+  if (!/^P\d{7,}$/.test(wallet)) {
+    alert("Кошелек PAYEER должен начинаться с P и содержать минимум 8 цифр");
+    return;
+  }
+
+  if (isNaN(amount) || amount < CONFIG.minWithdraw || amount > state.balance) {
+    alert(`Неверная сумма. Доступно: $${state.balance.toFixed(3)}`);
+    return;
+  }
+
+  const withdrawal = {
+    id: Date.now().toString(),
+    userId: state.userId,
+    wallet: wallet,
+    amount: amount,
+    status: "pending",
+    date: new Date().toISOString()
+  };
+
+  if (state.referrer) {
+    const referralBonus = amount * CONFIG.referralPercent;
+    const referrerData = await SecureStorage.get(state.referrer);
+    if (referrerData) {
+      referrerData.referralEarnings += referralBonus;
+      await SecureStorage.set(state.referrer, referrerData);
+      alert(`Ваш реферер получит +$${referralBonus.toFixed(3)} от вашего вывода!`);
+    }
+  }
+
+  // Сохраняем заявку с префиксом 'withdrawal_'
+  await SecureStorage.set('withdrawal_' + withdrawal.id, withdrawal);
+
+  state.balance -= amount;
+  await saveState();
+
+  document.getElementById('withdraw-form').style.display = 'none';
+  document.getElementById('wallet').value = '';
+  document.getElementById('amount').value = '';
+
+  alert(`Заявка #${withdrawal.id} на $${amount.toFixed(2)} создана!`);
+  updateUI();
+}
+
+function resetToDefault() {
+  state.balance = 0;
+  state.adViews = 0;
+  state.isAdBlocked = false;
+  state.adTimer = 0;
+  state.lastAdTime = null;
+  state.completedTasks = [];
+  saveState();
+  updateUI();
+}
+
+// ====== Инициализация ======
+async function init() {
+  setTimeout(() => {
+    document.getElementById('splash-screen').style.opacity = '0';
+    setTimeout(async () => {
+      document.getElementById('splash-screen').style.display = 'none';
+
+      // Инициализация пользователя
+      await initUser();
+
+      // Загружаем глобальные задачи
+      await loadGlobalTasks();
+
+      // Назначаем обработчики
+      document.getElementById('secret-admin-btn').addEventListener('click', function() {
+        showAdminLogin();
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.altKey && e.key === 'a') {
+          showAdminLogin();
+        }
+      });
+
+      // Защита от отладки
+      if (CONFIG.security.antiCheat) {
+        setInterval(() => {
+          if (window.console && console.log) {
+            console.clear();
+            console.log("%cСистема защищена", "color:red;font-size:20px");
+          }
+        }, 1000);
+      }
+    }, 500);
+  }, 2000);
+}
+
+// Запуск приложения
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
