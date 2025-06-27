@@ -7,22 +7,14 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --primary-color: #2ecc71;
-      --primary-dark: #27ae60;
-      --primary-light: #58d68d;
-      --bg-color: #f5f9f7;
-      --card-color: #ffffff;
-      --text-color: #2c3e50;
-      --secondary-text: #7f8c8d;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg-color: #1a2e22;
-        --card-color: #2c3e50;
-        --text-color: #ecf0f1;
-        --secondary-text: #bdc3c7;
-      }
+      --primary-color: #1a5c32;
+      --primary-dark: #0f3d20;
+      --primary-light: #2d7d46;
+      --bg-color: #0c1a12;
+      --card-color: #1a2e22;
+      --text-color: #e0f0e8;
+      --secondary-text: #8fa89a;
+      --accent-color: #3d9970;
     }
 
     body {
@@ -44,7 +36,8 @@
       border-radius: 16px;
       padding: 20px;
       margin-bottom: 20px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      border: 1px solid var(--primary-dark);
     }
 
     .btn {
@@ -64,15 +57,25 @@
       justify-content: center;
     }
 
+    .btn:hover {
+      background-color: var(--primary-light);
+      transform: translateY(-2px);
+    }
+
     .btn:disabled {
       opacity: 0.6;
       cursor: not-allowed;
+      transform: none;
     }
 
     .btn-secondary {
       background-color: var(--card-color);
-      color: var(--primary-color);
-      border: 2px solid var(--primary-color);
+      color: var(--accent-color);
+      border: 2px solid var(--accent-color);
+    }
+
+    .btn-secondary:hover {
+      background-color: rgba(61, 153, 112, 0.1);
     }
 
     .btn-disabled {
@@ -80,7 +83,7 @@
     }
 
     .reject-btn {
-      background-color: #e74c3c;
+      background-color: #c0392b;
       color: white;
       border: none;
       padding: 8px 12px;
@@ -96,7 +99,7 @@
     .balance-amount {
       font-size: 36px;
       font-weight: 700;
-      color: var(--primary-color);
+      color: var(--accent-color);
       margin: 10px 0;
     }
 
@@ -118,7 +121,7 @@
 
     .progress-fill {
       height: 100%;
-      background: var(--primary-color);
+      background: linear-gradient(90deg, var(--primary-color), var(--accent-color));
       width: 0%;
       transition: width 0.3s;
     }
@@ -142,11 +145,13 @@
       border-radius: 12px;
       padding: 16px;
       text-align: center;
+      border: 1px solid var(--primary-dark);
     }
 
     .stat-value {
       font-size: 20px;
       font-weight: 600;
+      color: var(--accent-color);
     }
 
     .referral-link {
@@ -156,13 +161,15 @@
       word-break: break-all;
       text-align: center;
       margin: 20px 0;
+      border: 1px solid var(--primary-dark);
     }
 
     .withdrawal-item {
-      border: 1px solid var(--bg-color);
+      border: 1px solid var(--primary-dark);
       border-radius: 12px;
       padding: 16px;
       margin-bottom: 16px;
+      background-color: var(--card-color);
     }
 
     .admin-actions {
@@ -172,7 +179,7 @@
     }
 
     .approve-btn {
-      background-color: #2ecc71;
+      background-color: var(--primary-color);
       color: white;
       border: none;
       padding: 8px;
@@ -182,7 +189,7 @@
     }
 
     .reject-btn {
-      background-color: #e74c3c;
+      background-color: #c0392b;
       color: white;
       border: none;
       padding: 8px;
@@ -194,14 +201,15 @@
     .task {
       margin-bottom: 20px;
       padding-bottom: 20px;
-      border-bottom: 1px solid var(--bg-color);
+      border-bottom: 1px solid var(--primary-dark);
     }
 
     .admin-task {
       margin-bottom: 15px;
       padding: 15px;
-      background: rgba(0,0,0,0.05);
+      background: rgba(0,0,0,0.1);
       border-radius: 8px;
+      border: 1px solid var(--primary-dark);
     }
 
     #secret-admin-btn {
@@ -297,8 +305,21 @@
       padding: 14px;
       margin-bottom: 12px;
       border-radius: 8px;
-      border: 1px solid var(--bg-color);
+      border: 1px solid var(--primary-dark);
       font-family: inherit;
+      background-color: var(--card-color);
+      color: var(--text-color);
+    }
+
+    input {
+      width: 100%;
+      padding: 14px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--primary-dark);
+      font-family: inherit;
+      background-color: var(--card-color);
+      color: var(--text-color);
     }
 
     .status-badge {
@@ -315,13 +336,43 @@
     }
 
     .status-completed {
-      background-color: #2ecc71;
+      background-color: var(--primary-color);
       color: white;
     }
 
     .status-rejected {
-      background-color: #e74c3c;
+      background-color: #c0392b;
       color: white;
+    }
+
+    /* Страницы */
+    .page {
+      display: none;
+      animation: fadeIn 0.3s;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--accent-color);
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+
+    .back-btn svg {
+      margin-right: 5px;
     }
   </style>
 </head>
@@ -338,47 +389,88 @@
 
   <!-- Основной интерфейс -->
   <div class="container">
-    <div class="card">
-      <div class="balance">
-        <div class="balance-label">Ваш баланс</div>
-        <div class="balance-amount" id="balance">$0.000</div>
+    <!-- Главная страница -->
+    <div id="main-page" class="page active">
+      <div class="card">
+        <div class="balance">
+          <div class="balance-label">Ваш баланс</div>
+          <div class="balance-amount" id="balance">$0.000</div>
+        </div>
+
+        <button class="btn" id="watch-ad-btn" onclick="startAd()">
+          🎥 Смотреть рекламу (+$0.0003)
+        </button>
+
+        <div class="progress-container">
+          <div class="progress-text">
+            <span>Просмотров: <span id="ad-counter">0</span>/30</span>
+            <span id="ad-timer"></span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="ad-progress"></div>
+          </div>
+        </div>
       </div>
 
-      <button class="btn" id="watch-ad-btn" onclick="startAd()">
-        🎥 Смотреть рекламу (+$0.0003)
-      </button>
+      <div class="card">
+        <button class="btn" onclick="showPage('withdraw-page')">
+          💳 Вывести средства
+        </button>
 
-      <div class="progress-container">
-        <div class="progress-text">
-          <span>Просмотров: <span id="ad-counter">0</span>/30</span>
-          <span id="ad-timer"></span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="ad-progress"></div>
-        </div>
+        <button class="btn btn-secondary" onclick="showPage('referral-page')">
+          👥 Реферальная программа
+        </button>
+
+        <button class="btn btn-secondary" onclick="showPage('tasks-page')">
+          🎯 Задания
+        </button>
       </div>
     </div>
 
-    <div class="card">
-      <button class="btn" onclick="showWithdrawForm()">
-        💳 Вывести средства
+    <!-- Страница вывода -->
+    <div id="withdraw-page" class="page">
+      <button class="back-btn" onclick="showPage('main-page')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Назад
       </button>
-
-      <button class="btn btn-secondary" onclick="showReferralCard()">
-        👥 Реферальная программа
-      </button>
-
-      <button class="btn btn-secondary" onclick="showTasksCard()">
-        🎯 Задания
-      </button>
-
-      <div id="withdraw-form" style="display:none; margin-top:20px;">
-        <input type="text" id="wallet" placeholder="PAYEER кошелек (P1234567)" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
-        <input type="number" id="amount" placeholder="Сумма ($1+)" min="1" step="0.01" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+      
+      <div class="card">
+        <h2 style="margin-top: 0;">💳 Вывод средств</h2>
+        
+        <input type="text" id="wallet" placeholder="PAYEER кошелек (P1234567)">
+        <input type="number" id="amount" placeholder="Сумма ($1+)" min="1" step="0.01">
+        
+        <div style="margin: 20px 0; padding: 15px; background-color: var(--bg-color); border-radius: 12px; border: 1px solid var(--primary-dark);">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span>Минимальная сумма:</span>
+            <span>$1.00</span>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span>Доступно для вывода:</span>
+            <span id="available-balance">$0.000</span>
+          </div>
+        </div>
+        
         <button class="btn" onclick="submitWithdrawal()">Отправить заявку</button>
       </div>
+    </div>
 
-      <div id="referral-card" style="display:none;">
+    <!-- Реферальная страница -->
+    <div id="referral-page" class="page">
+      <button class="back-btn" onclick="showPage('main-page')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Назад
+      </button>
+      
+      <div class="card">
+        <h2 style="margin-top: 0;">👥 Реферальная программа</h2>
+        
         <div class="referral-stats">
           <div class="stat-card">
             <div class="stat-value" id="referral-count">0</div>
@@ -390,13 +482,24 @@
           </div>
         </div>
 
-        <p style="text-align: center; margin: 20px 0;">За каждого приглашенного друга вы получаете <strong>15%</strong> от его выводов!</p>
+        <p style="text-align: center; margin: 20px 0;">За каждого приглашенного друга вы получаете <strong style="color: var(--accent-color);">15%</strong> от его выводов!</p>
 
         <div class="referral-link" id="referral-link"></div>
         <button class="btn" onclick="copyReferralLink()">Копировать ссылку</button>
       </div>
+    </div>
 
-      <div id="tasks-card" style="display:none;">
+    <!-- Страница заданий -->
+    <div id="tasks-page" class="page">
+      <button class="back-btn" onclick="showPage('main-page')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Назад
+      </button>
+      
+      <div class="card">
         <h2 style="margin-top: 0;">🎯 Доступные задания</h2>
         <div id="tasks-list"></div>
       </div>
@@ -410,7 +513,7 @@
   <div id="admin-login" class="hidden">
     <div class="card" style="max-width:400px; width:100%;">
       <h2 style="margin-top:0; text-align:center;">Админ-доступ</h2>
-      <input type="password" id="admin-password" placeholder="Введите пароль" style="width:100%; padding:14px; margin:12px 0; border-radius:8px; border:1px solid var(--bg-color);">
+      <input type="password" id="admin-password" placeholder="Введите пароль">
       <button class="btn" onclick="checkAdminPassword()" style="width:100%;">Войти</button>
       <button class="btn btn-secondary" onclick="hideAdminLogin()" style="width:100%; margin-top:10px;">Отмена</button>
     </div>
@@ -420,7 +523,7 @@
     <div class="card">
       <h2 style="margin-top:0; display:flex; justify-content:space-between; align-items:center;">
         <span>Админ-панель</span>
-        <button onclick="hideAdminPanel()" style="background:none; border:none; font-size:20px; cursor:pointer;">✕</button>
+        <button onclick="hideAdminPanel()" style="background:none; border:none; font-size:20px; cursor:pointer; color: var(--text-color);">✕</button>
       </h2>
 
       <h3>Заявки на вывод</h3>
@@ -433,11 +536,11 @@
 
       <h3>Управление заданиями</h3>
       <div id="admin-tasks">
-        <input type="text" id="new-task-title" placeholder="Название задания" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
-        <input type="number" id="new-task-reward" placeholder="Награда ($)" step="0.01" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <input type="text" id="new-task-title" placeholder="Название задания">
+        <input type="number" id="new-task-reward" placeholder="Награда ($)" step="0.01">
         <textarea id="new-task-desc" placeholder="Описание задания" rows="3"></textarea>
-        <input type="text" id="new-task-url" placeholder="Ссылка (https://...)" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
-        <input type="number" id="new-task-cooldown" placeholder="Таймер (секунды)" value="10" style="width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid var(--bg-color);">
+        <input type="text" id="new-task-url" placeholder="Ссылка (https://...)">
+        <input type="number" id="new-task-cooldown" placeholder="Таймер (секунды)" value="10">
         <button class="btn" onclick="addTask()">Добавить задание</button>
 
         <div id="current-tasks" style="margin-top: 20px;"></div>
@@ -652,13 +755,6 @@ async function loadGlobalTasks() {
     GLOBAL_TASKS = [];
     await SecureStorage.set('global_tasks', GLOBAL_TASKS);
   }
-}
-
-function showTasksCard() {
-  document.getElementById('tasks-card').style.display = 'block';
-  document.getElementById('withdraw-form').style.display = 'none';
-  document.getElementById('referral-card').style.display = 'none';
-  renderTasks();
 }
 
 function renderTasks() {
@@ -906,6 +1002,7 @@ async function saveState() {
 
 function updateUI() {
   document.getElementById('balance').textContent = '$' + state.balance.toFixed(3);
+  document.getElementById('available-balance').textContent = '$' + state.balance.toFixed(3);
   document.getElementById('ad-counter').textContent = state.adViews;
   document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.hourlyLimit) * 100}%`;
   document.getElementById('referral-count').textContent = state.referrals;
@@ -1023,20 +1120,23 @@ function updateAdButtonText(seconds) {
   btn.textContent = `⌛ Доступно через: ${seconds} сек`;
 }
 
-function showWithdrawForm() {
-  if (state.balance < CONFIG.minWithdraw) {
-    alert(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
-    return;
+function showPage(pageId) {
+  // Скрываем все страницы
+  document.querySelectorAll('.page').forEach(page => {
+    page.classList.remove('active');
+  });
+  
+  // Показываем нужную страницу
+  document.getElementById(pageId).classList.add('active');
+  
+  // Обновляем данные на странице, если необходимо
+  if (pageId === 'tasks-page') {
+    renderTasks();
+  } else if (pageId === 'referral-page') {
+    // Можно добавить дополнительную логику для реферальной страницы
+  } else if (pageId === 'withdraw-page') {
+    // Можно добавить дополнительную логику для страницы вывода
   }
-  document.getElementById('withdraw-form').style.display = 'block';
-  document.getElementById('referral-card').style.display = 'none';
-  document.getElementById('tasks-card').style.display = 'none';
-}
-
-function showReferralCard() {
-  document.getElementById('referral-card').style.display = 'block';
-  document.getElementById('withdraw-form').style.display = 'none';
-  document.getElementById('tasks-card').style.display = 'none';
 }
 
 function copyReferralLink() {
@@ -1055,8 +1155,13 @@ async function submitWithdrawal() {
     return;
   }
 
-  if (isNaN(amount) || amount < CONFIG.minWithdraw || amount > state.balance) {
-    alert(`Неверная сумма. Доступно: $${state.balance.toFixed(3)}`);
+  if (isNaN(amount) || amount < CONFIG.minWithdraw) {
+    alert(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
+    return;
+  }
+
+  if (amount > state.balance) {
+    alert(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
     return;
   }
 
@@ -1085,12 +1190,12 @@ async function submitWithdrawal() {
   state.balance -= amount;
   await saveState();
 
-  document.getElementById('withdraw-form').style.display = 'none';
   document.getElementById('wallet').value = '';
   document.getElementById('amount').value = '';
 
   alert(`Заявка #${withdrawal.id} на $${amount.toFixed(2)} создана!`);
   updateUI();
+  showPage('main-page');
 }
 
 function resetToDefault() {
@@ -1127,6 +1232,9 @@ async function init() {
           showAdminLogin();
         }
       });
+
+      // Проверяем активное задание при загрузке
+      checkActiveTask();
 
       // Защита от отладки
       if (CONFIG.security.antiCheat) {
