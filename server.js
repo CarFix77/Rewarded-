@@ -1,46 +1,17 @@
 // Импорты
 import { Application, Router } from "https://deno.land/x/oak/mod.ts";
-import { DB } from "https://deno.land/x/sqlite/mod.ts";
 
 // Конфигурация
 const CONFIG = {
-  SECRET_KEY: "Jora1513", // Ваш ключ API
+  SECRET_KEY: "Jora1513", // Ваш API-ключ
   REWARD_AMOUNT: 0.0003, // $ за просмотр
   REF_PERCENT: 0.15, // 15% реферальных
   MIN_WITHDRAW: 1.00, // Минимальный вывод
-  ADMIN_PASSWORD: "AdGramAdmin777" // Пароль для админки
+  ADMIN_PASSWORD: "AdGramAdmin777" // Пароль админки
 };
 
-// Инициализация БД
-const db = new DB("db.sqlite");
-db.execute(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    balance REAL DEFAULT 0,
-    referrals INTEGER DEFAULT 0,
-    ref_earnings REAL DEFAULT 0
-  )
-`);
-
-db.execute(`
-  CREATE TABLE IF NOT EXISTS withdrawals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT,
-    amount REAL,
-    wallet TEXT,
-    status TEXT DEFAULT 'pending',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-db.execute(`
-  CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT,
-    reward REAL,
-    description TEXT
-  )
-`);
+// Инициализация KV-базы
+const kv = await Deno.openKv();
 
 // Сервер
 const app = new Application();
@@ -49,7 +20,7 @@ const router = new Router();
 // Middleware для проверки ключа API
 router.use(async (ctx, next) => {
   const key = ctx.request.url.searchParams.get("key");
-  if (key !== CONFIG.SECRET_KEY && ctx.request.url.pathname !== "/admin") {
+  if (key !== CONFIG.SECRET_KEY && !ctx.request.url.pathname.startsWith("/admin")) {
     ctx.response.status = 403;
     ctx.response.body = { error: "Invalid API key" };
     return;
@@ -66,28 +37,45 @@ router.get("/reward", async (ctx) => {
     return;
   }
 
-  // Создаем пользователя если не существует
-  db.query("INSERT OR IGNORE INTO users (id) VALUES (?)", [userId]);
+  // Атомарное обновление баланса
+  const userKey = ["users", userId];
+  const result = await kv.atomic()
+    .set(["total_requests"], (await kv.get(["total_requests"])).value + 1 || 1)
+    .mutate({
+      key: userKey,
+      type: "sum",
+      value: { balance: CONFIG.REWARD_AMOUNT }
+    })
+    .commit();
 
-  // Начисляем за просмотр
-  db.query("UPDATE users SET balance = balance + ? WHERE id = ?", [
-    CONFIG.REWARD_AMOUNT,
-    userId
-  ]);
-
-  // Реферальное начисление (если есть реферер)
-  const ref = ctx.request.url.searchParams.get("ref");
-  if (ref && ref !== userId) {
-    const refReward = CONFIG.REWARD_AMOUNT * CONFIG.REF_PERCENT;
-    db.query(
-      "UPDATE users SET balance = balance + ?, ref_earnings = ref_earnings + ?, referrals = referrals + 1 WHERE id = ?",
-      [refReward, refReward, ref]
-    );
+  if (!result.ok) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to update balance" };
+    return;
   }
 
+  // Реферальное начисление
+  const refId = ctx.request.url.searchParams.get("ref");
+  if (refId && refId !== userId) {
+    const refReward = CONFIG.REWARD_AMOUNT * CONFIG.REF_PERCENT;
+    await kv.atomic()
+      .mutate({
+        key: ["users", refId],
+        type: "sum",
+        value: { 
+          balance: refReward,
+          ref_earnings: refReward,
+          referrals: 1
+        }
+      })
+      .commit();
+  }
+
+  // Возвращаем текущий баланс
+  const user = await kv.get(userKey);
   ctx.response.body = {
     success: true,
-    balance: db.query("SELECT balance FROM users WHERE id = ?", [userId])[0]?.balance
+    balance: user.value?.balance || 0
   };
 });
 
@@ -101,30 +89,44 @@ router.post("/withdraw", async (ctx) => {
     return;
   }
 
-  const balance = db.query("SELECT balance FROM users WHERE id = ?", [userId])[0]?.balance;
-  if (balance < CONFIG.MIN_WITHDRAW || amount < CONFIG.MIN_WITHDRAW) {
+  // Проверка минимальной суммы
+  if (amount < CONFIG.MIN_WITHDRAW) {
     ctx.response.status = 400;
     ctx.response.body = { error: `Minimum withdraw is $${CONFIG.MIN_WITHDRAW}` };
     return;
   }
 
-  if (balance < amount) {
+  // Атомарная проверка баланса и списание
+  const userKey = ["users", userId];
+  const withdrawalId = crypto.randomUUID();
+
+  const result = await kv.atomic()
+    .check(await kv.get(userKey)) // Проверяем актуальность данных
+    .mutate({
+      key: userKey,
+      type: "checkAndSet",
+      value: { balance: -amount },
+      threshold: amount // Проверяет, что баланс >= amount
+    })
+    .set(["withdrawals", withdrawalId], {
+      userId,
+      amount,
+      wallet,
+      status: "pending",
+      createdAt: new Date().toISOString()
+    })
+    .commit();
+
+  if (!result.ok) {
     ctx.response.status = 400;
     ctx.response.body = { error: "Insufficient balance" };
     return;
   }
 
-  // Списание и создание заявки
-  db.query("UPDATE users SET balance = balance - ? WHERE id = ?", [amount, userId]);
-  db.query(
-    "INSERT INTO withdrawals (user_id, amount, wallet) VALUES (?, ?, ?)",
-    [userId, amount, wallet]
-  );
-
-  ctx.response.body = { success: true };
+  ctx.response.body = { success: true, withdrawalId };
 });
 
-// Админ-панель (веб-интерфейс)
+// Админ-панель
 router.get("/admin", async (ctx) => {
   if (ctx.request.url.searchParams.get("password") !== CONFIG.ADMIN_PASSWORD) {
     ctx.response.status = 403;
@@ -132,25 +134,53 @@ router.get("/admin", async (ctx) => {
     return;
   }
 
-  // Статистика
-  const stats = {
-    users: db.query("SELECT COUNT(*) FROM users")[0],
-    balance: db.query("SELECT SUM(balance) FROM users")[0],
-    withdrawals: db.query("SELECT * FROM withdrawals ORDER BY created_at DESC LIMIT 50")
-  };
+  // Собираем статистику
+  const [
+    usersCount,
+    totalBalance,
+    recentWithdrawals
+  ] = await Promise.all([
+    Array.fromAsync(kv.list({ prefix: ["users"] })).then(arr => arr.length),
+    Array.fromAsync(kv.list({ prefix: ["users"] }))
+      .then(users => users.reduce((sum, user) => sum + (user.value.balance || 0), 0)),
+    Array.fromAsync(kv.list({ prefix: ["withdrawals"] }, { limit: 20, reverse: true }))
+  ]);
 
   // Генерация HTML
   ctx.response.body = `
     <h1>AdGram Admin</h1>
-    <p>Users: ${stats.users}</p>
-    <p>Total balance: $${stats.balance}</p>
+    <p>Total users: ${usersCount}</p>
+    <p>Total balance: $${totalBalance.toFixed(4)}</p>
+    
     <h2>Recent withdrawals</h2>
     <ul>
-      ${stats.withdrawals.map(w => `
-        <li>${w.user_id}: $${w.amount} → ${w.wallet} (${w.status})</li>
+      ${recentWithdrawals.map(w => `
+        <li>
+          ${w.value.userId} → $${w.value.amount} 
+          (${w.value.wallet})<br>
+          <small>${w.value.createdAt} • ${w.value.status}</small>
+        </li>
       `).join("")}
     </ul>
   `;
+});
+
+// Проверка баланса
+router.get("/balance", async (ctx) => {
+  const userId = ctx.request.url.searchParams.get("userid");
+  if (!userId) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Missing userid" };
+    return;
+  }
+
+  const user = await kv.get(["users", userId]);
+  ctx.response.body = {
+    success: true,
+    balance: user.value?.balance || 0,
+    referrals: user.value?.referrals || 0,
+    ref_earnings: user.value?.ref_earnings || 0
+  };
 });
 
 app.use(router.routes());
