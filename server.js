@@ -10,15 +10,24 @@ const CONFIG = {
   ADMIN_PASSWORD: "AdGramAdmin777" // Пароль админки
 };
 
-// Инициализация KV-базы
+// Инициализация KV-базы (работает в Deno Deploy)
 const kv = await Deno.openKv();
 
 // Сервер
 const app = new Application();
 const router = new Router();
 
-// Middleware для проверки ключа API
+// Middleware для JSON-ответов
+app.use(async (ctx, next) => {
+  ctx.response.headers.set("Content-Type", "application/json");
+  await next();
+});
+
+// Проверка API-ключа
 router.use(async (ctx, next) => {
+  const skipAuth = ["/", "/health"].includes(ctx.request.url.pathname);
+  if (skipAuth) return await next();
+  
   const key = ctx.request.url.searchParams.get("key");
   if (key !== CONFIG.SECRET_KEY && !ctx.request.url.pathname.startsWith("/admin")) {
     ctx.response.status = 403;
@@ -26,6 +35,24 @@ router.use(async (ctx, next) => {
     return;
   }
   await next();
+});
+
+// Health check
+router.get("/health", (ctx) => {
+  ctx.response.body = { status: "OK" };
+});
+
+// Главная страница
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    app: "AdGram Reward Server",
+    endpoints: {
+      reward: "/reward?userid=ID&key=API_KEY",
+      balance: "/balance?userid=ID&key=API_KEY",
+      withdraw: "POST /withdraw {userId, amount, wallet}",
+      admin: "/admin?password=ADMIN_PASS"
+    }
+  };
 });
 
 // Reward URL для AdGram
@@ -40,7 +67,6 @@ router.get("/reward", async (ctx) => {
   // Атомарное обновление баланса
   const userKey = ["users", userId];
   const result = await kv.atomic()
-    .set(["total_requests"], (await kv.get(["total_requests"])).value + 1 || 1)
     .mutate({
       key: userKey,
       type: "sum",
@@ -71,98 +97,12 @@ router.get("/reward", async (ctx) => {
       .commit();
   }
 
-  // Возвращаем текущий баланс
+  // Ответ
   const user = await kv.get(userKey);
   ctx.response.body = {
     success: true,
     balance: user.value?.balance || 0
   };
-});
-
-// Вывод средств
-router.post("/withdraw", async (ctx) => {
-  const { userId, amount, wallet } = await ctx.request.body().value;
-
-  if (!userId || !amount || !wallet) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Missing data" };
-    return;
-  }
-
-  // Проверка минимальной суммы
-  if (amount < CONFIG.MIN_WITHDRAW) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: `Minimum withdraw is $${CONFIG.MIN_WITHDRAW}` };
-    return;
-  }
-
-  // Атомарная проверка баланса и списание
-  const userKey = ["users", userId];
-  const withdrawalId = crypto.randomUUID();
-
-  const result = await kv.atomic()
-    .check(await kv.get(userKey)) // Проверяем актуальность данных
-    .mutate({
-      key: userKey,
-      type: "checkAndSet",
-      value: { balance: -amount },
-      threshold: amount // Проверяет, что баланс >= amount
-    })
-    .set(["withdrawals", withdrawalId], {
-      userId,
-      amount,
-      wallet,
-      status: "pending",
-      createdAt: new Date().toISOString()
-    })
-    .commit();
-
-  if (!result.ok) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Insufficient balance" };
-    return;
-  }
-
-  ctx.response.body = { success: true, withdrawalId };
-});
-
-// Админ-панель
-router.get("/admin", async (ctx) => {
-  if (ctx.request.url.searchParams.get("password") !== CONFIG.ADMIN_PASSWORD) {
-    ctx.response.status = 403;
-    ctx.response.body = "Access denied";
-    return;
-  }
-
-  // Собираем статистику
-  const [
-    usersCount,
-    totalBalance,
-    recentWithdrawals
-  ] = await Promise.all([
-    Array.fromAsync(kv.list({ prefix: ["users"] })).then(arr => arr.length),
-    Array.fromAsync(kv.list({ prefix: ["users"] }))
-      .then(users => users.reduce((sum, user) => sum + (user.value.balance || 0), 0)),
-    Array.fromAsync(kv.list({ prefix: ["withdrawals"] }, { limit: 20, reverse: true }))
-  ]);
-
-  // Генерация HTML
-  ctx.response.body = `
-    <h1>AdGram Admin</h1>
-    <p>Total users: ${usersCount}</p>
-    <p>Total balance: $${totalBalance.toFixed(4)}</p>
-    
-    <h2>Recent withdrawals</h2>
-    <ul>
-      ${recentWithdrawals.map(w => `
-        <li>
-          ${w.value.userId} → $${w.value.amount} 
-          (${w.value.wallet})<br>
-          <small>${w.value.createdAt} • ${w.value.status}</small>
-        </li>
-      `).join("")}
-    </ul>
-  `;
 });
 
 // Проверка баланса
@@ -183,5 +123,93 @@ router.get("/balance", async (ctx) => {
   };
 });
 
+// Вывод средств
+router.post("/withdraw", async (ctx) => {
+  try {
+    const { userId, amount, wallet } = await ctx.request.body().value;
+
+    if (!userId || !amount || !wallet) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Missing data" };
+      return;
+    }
+
+    if (amount < CONFIG.MIN_WITHDRAW) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: `Minimum withdraw is $${CONFIG.MIN_WITHDRAW}` };
+      return;
+    }
+
+    const withdrawalId = crypto.randomUUID();
+    const userKey = ["users", userId];
+
+    // Атомарная проверка и списание
+    const result = await kv.atomic()
+      .check(await kv.get(userKey))
+      .mutate({
+        key: userKey,
+        type: "checkAndSet",
+        value: { balance: -amount },
+        threshold: amount
+      })
+      .set(["withdrawals", withdrawalId], {
+        userId,
+        amount,
+        wallet,
+        status: "pending",
+        createdAt: new Date().toISOString()
+      })
+      .commit();
+
+    if (!result.ok) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Insufficient balance" };
+      return;
+    }
+
+    ctx.response.body = { success: true, withdrawalId };
+
+  } catch (e) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Админ-панель
+router.get("/admin", async (ctx) => {
+  if (ctx.request.url.searchParams.get("password") !== CONFIG.ADMIN_PASSWORD) {
+    ctx.response.status = 403;
+    ctx.response.body = { error: "Access denied" };
+    return;
+  }
+
+  const [users, withdrawals] = await Promise.all([
+    Array.fromAsync(kv.list({ prefix: ["users"] })),
+    Array.fromAsync(kv.list({ prefix: ["withdrawals"] }, { limit: 20, reverse: true }))
+  ]);
+
+  const stats = {
+    totalUsers: users.length,
+    totalBalance: users.reduce((sum, user) => sum + (user.value.balance || 0), 0),
+    pendingWithdrawals: withdrawals.filter(w => w.value.status === "pending").length
+  };
+
+  ctx.response.body = {
+    ...stats,
+    recentWithdrawals: withdrawals.map(w => ({
+      id: w.key[1],
+      userId: w.value.userId,
+      amount: w.value.amount,
+      status: w.value.status,
+      date: w.value.createdAt
+    }))
+  };
+});
+
+// Подключение роутера
 app.use(router.routes());
+app.use(router.allowedMethods());
+
+// Запуск сервера
+console.log("Server started on http://localhost:8000");
 await app.listen({ port: 8000 });
