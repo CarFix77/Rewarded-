@@ -1,57 +1,60 @@
-Сервер
-
-
-
-// Импорты
+// server.ts - Полная версия сервера для AdGram
 import { Application, Router } from "https://deno.land/x/oak/mod.ts";
+import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
 // Конфигурация
 const CONFIG = {
   SECRET_KEY: "Jora1513", // Ваш API-ключ
-  REWARD_AMOUNT: 0.0003, // $ за просмотр
+  REWARD_AMOUNT: 0.0003, // Награда за просмотр
   REF_PERCENT: 0.15, // 15% реферальных
   MIN_WITHDRAW: 1.00, // Минимальный вывод
-  ADMIN_PASSWORD: "AdGramAdmin777" // Пароль админки
+  ADMIN_PASSWORD: "AdGramAdmin777", // Пароль админки
+  DAILY_LIMIT: 30, // Лимит просмотров/день
+  COOLDOWN: 10, // КД между просмотрами (сек)
+  PORT: 8000
 };
 
-// Инициализация KV-базы (работает в Deno Deploy)
+// Инициализация
 const kv = await Deno.openKv();
-
-// Сервер
 const app = new Application();
 const router = new Router();
 
-// Middleware для JSON-ответов
+// Middleware
+app.use(oakCors({ origin: "*" }));
 app.use(async (ctx, next) => {
   ctx.response.headers.set("Content-Type", "application/json");
-  await next();
+  try {
+    await next();
+  } catch (err) {
+    console.error(err);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
 });
 
-// Проверка API-ключа
-router.use(async (ctx, next) => {
-  const skipAuth = ["/", "/health"].includes(ctx.request.url.pathname);
-  if (skipAuth) return await next();
+// Проверка авторизации
+const authMiddleware = async (ctx: any, next: any) => {
+  const publicRoutes = ["/", "/health"];
+  if (publicRoutes.includes(ctx.request.url.pathname)) return await next();
   
-  const key = ctx.request.url.searchParams.get("key");
+  const key = ctx.request.url.searchParams.get("key") || ctx.request.headers.get("x-api-key");
   if (key !== CONFIG.SECRET_KEY && !ctx.request.url.pathname.startsWith("/admin")) {
     ctx.response.status = 403;
     ctx.response.body = { error: "Invalid API key" };
     return;
   }
   await next();
-});
+};
 
-// Health check
-router.get("/health", (ctx) => {
-  ctx.response.body = { status: "OK" };
-});
+// API Endpoints
 
-// Главная страница
+// 1. Главная страница
 router.get("/", (ctx) => {
   ctx.response.body = {
-    app: "AdGram Reward Server",
+    app: "AdGram Reward System",
+    version: "1.0.0",
     endpoints: {
-      reward: "/reward?userid=ID&key=API_KEY",
+      reward: "/reward?userid=ID&key=API_KEY&ref=REF_ID",
       balance: "/balance?userid=ID&key=API_KEY",
       withdraw: "POST /withdraw {userId, amount, wallet}",
       admin: "/admin?password=ADMIN_PASS"
@@ -59,161 +62,161 @@ router.get("/", (ctx) => {
   };
 });
 
-// Reward URL для AdGram
-router.get("/reward", async (ctx) => {
+// 2. Награда за просмотр
+router.get("/reward", authMiddleware, async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
+  const refId = ctx.request.url.searchParams.get("ref");
+
   if (!userId) {
     ctx.response.status = 400;
-    ctx.response.body = { error: "Missing userid" };
+    ctx.response.body = { error: "userid is required" };
     return;
   }
 
-  // Атомарное обновление баланса
-  const userKey = ["users", userId];
-  const result = await kv.atomic()
-    .mutate({
-      key: userKey,
-      type: "sum",
-      value: { balance: CONFIG.REWARD_AMOUNT }
-    })
-    .commit();
+  // Проверка дневного лимита
+  const today = new Date().toISOString().split("T")[0];
+  const dailyKey = ["daily", userId, today];
+  const { value: views = 0 } = await kv.get<number>(dailyKey);
 
-  if (!result.ok) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to update balance" };
+  if (views >= CONFIG.DAILY_LIMIT) {
+    ctx.response.status = 429;
+    ctx.response.body = { error: "Daily limit reached" };
     return;
   }
+
+  // Начисление награды
+  const tx = kv.atomic()
+    .sum(["users", userId, "balance"], CONFIG.REWARD_AMOUNT)
+    .sum(dailyKey, 1);
 
   // Реферальное начисление
-  const refId = ctx.request.url.searchParams.get("ref");
   if (refId && refId !== userId) {
     const refReward = CONFIG.REWARD_AMOUNT * CONFIG.REF_PERCENT;
-    await kv.atomic()
-      .mutate({
-        key: ["users", refId],
-        type: "sum",
-        value: { 
-          balance: refReward,
-          ref_earnings: refReward,
-          referrals: 1
-        }
-      })
-      .commit();
+    tx
+      .sum(["users", refId, "balance"], refReward)
+      .sum(["users", refId, "ref_earnings"], refReward)
+      .sum(["users", refId, "referrals"], 1);
   }
 
-  // Ответ
-  const user = await kv.get(userKey);
+  await tx.commit();
+
   ctx.response.body = {
     success: true,
-    balance: user.value?.balance || 0
+    reward: CONFIG.REWARD_AMOUNT,
+    daily_left: CONFIG.DAILY_LIMIT - views - 1
   };
 });
 
-// Проверка баланса
-router.get("/balance", async (ctx) => {
+// 3. Проверка баланса
+router.get("/balance", authMiddleware, async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
+  
   if (!userId) {
     ctx.response.status = 400;
-    ctx.response.body = { error: "Missing userid" };
+    ctx.response.body = { error: "userid is required" };
     return;
   }
 
-  const user = await kv.get(["users", userId]);
+  const [balance, refEarnings, referrals] = await Promise.all([
+    kv.get<number>(["users", userId, "balance"]),
+    kv.get<number>(["users", userId, "ref_earnings"]),
+    kv.get<number>(["users", userId, "referrals"])
+  ]);
+
   ctx.response.body = {
     success: true,
-    balance: user.value?.balance || 0,
-    referrals: user.value?.referrals || 0,
-    ref_earnings: user.value?.ref_earnings || 0
+    balance: balance.value || 0,
+    ref_earnings: refEarnings.value || 0,
+    referrals: referrals.value || 0
   };
 });
 
-// Вывод средств
-router.post("/withdraw", async (ctx) => {
-  try {
-    const { userId, amount, wallet } = await ctx.request.body().value;
+// 4. Вывод средств
+router.post("/withdraw", authMiddleware, async (ctx) => {
+  const { userId, amount, wallet } = await ctx.request.body().value;
 
-    if (!userId || !amount || !wallet) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Missing data" };
-      return;
-    }
-
-    if (amount < CONFIG.MIN_WITHDRAW) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: `Minimum withdraw is $${CONFIG.MIN_WITHDRAW}` };
-      return;
-    }
-
-    const withdrawalId = crypto.randomUUID();
-    const userKey = ["users", userId];
-
-    // Атомарная проверка и списание
-    const result = await kv.atomic()
-      .check(await kv.get(userKey))
-      .mutate({
-        key: userKey,
-        type: "checkAndSet",
-        value: { balance: -amount },
-        threshold: amount
-      })
-      .set(["withdrawals", withdrawalId], {
-        userId,
-        amount,
-        wallet,
-        status: "pending",
-        createdAt: new Date().toISOString()
-      })
-      .commit();
-
-    if (!result.ok) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Insufficient balance" };
-      return;
-    }
-
-    ctx.response.body = { success: true, withdrawalId };
-
-  } catch (e) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+  if (!userId || !amount || !wallet) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Missing required fields" };
+    return;
   }
+
+  if (amount < CONFIG.MIN_WITHDRAW) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: `Minimum withdraw is $${CONFIG.MIN_WITHDRAW}` };
+    return;
+  }
+
+  // Проверка баланса
+  const balance = (await kv.get<number>(["users", userId, "balance"])).value || 0;
+  if (balance < amount) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Insufficient balance" };
+    return;
+  }
+
+  // Создание заявки
+  const withdrawalId = crypto.randomUUID();
+  const tx = kv.atomic()
+    .set(["withdrawals", withdrawalId], {
+      userId,
+      amount,
+      wallet,
+      status: "pending",
+      date: new Date().toISOString()
+    })
+    .sum(["users", userId, "balance"], -amount);
+
+  if (!(await tx.commit()).ok) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Withdrawal failed" };
+    return;
+  }
+
+  ctx.response.body = {
+    success: true,
+    withdrawalId,
+    newBalance: balance - amount
+  };
 });
 
-// Админ-панель
+// 5. Админ-панель
 router.get("/admin", async (ctx) => {
-  if (ctx.request.url.searchParams.get("password") !== CONFIG.ADMIN_PASSWORD) {
+  const password = ctx.request.url.searchParams.get("password");
+  
+  if (password !== CONFIG.ADMIN_PASSWORD) {
     ctx.response.status = 403;
     ctx.response.body = { error: "Access denied" };
     return;
   }
 
-  const [users, withdrawals] = await Promise.all([
-    Array.fromAsync(kv.list({ prefix: ["users"] })),
-    Array.fromAsync(kv.list({ prefix: ["withdrawals"] }, { limit: 20, reverse: true }))
-  ]);
+  // Статистика
+  const users = [];
+  for await (const entry of kv.list({ prefix: ["users"] })) {
+    users.push(entry);
+  }
 
-  const stats = {
-    totalUsers: users.length,
-    totalBalance: users.reduce((sum, user) => sum + (user.value.balance || 0), 0),
-    pendingWithdrawals: withdrawals.filter(w => w.value.status === "pending").length
-  };
+  const withdrawals = [];
+  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+    withdrawals.push(entry);
+  }
 
   ctx.response.body = {
-    ...stats,
-    recentWithdrawals: withdrawals.map(w => ({
-      id: w.key[1],
-      userId: w.value.userId,
-      amount: w.value.amount,
-      status: w.value.status,
-      date: w.value.createdAt
-    }))
+    total_users: users.length,
+    total_balance: users.reduce((sum, user) => sum + (user.value.balance || 0), 0),
+    pending_withdrawals: withdrawals.filter(w => w.value.status === "pending").length,
+    recent_withdrawals: withdrawals
+      .slice(-10)
+      .map(w => ({
+        id: w.key[1],
+        ...w.value
+      }))
   };
 });
 
-// Подключение роутера
+// Запуск сервера
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-// Запуск сервера
-console.log("Server started on http://localhost:8000");
-await app.listen({ port: 8000 });
+console.log(`🚀 Server started on port ${CONFIG.PORT}`);
+await app.listen({ port: CONFIG.PORT });
