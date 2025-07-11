@@ -1,16 +1,16 @@
-// server.ts - Полная версия сервера для AdGram
+// server.js - Полная рабочая версия для Deno Deploy
 import { Application, Router } from "https://deno.land/x/oak/mod.ts";
 import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
 // Конфигурация
 const CONFIG = {
-  SECRET_KEY: "Jora1513", // Ваш API-ключ
-  REWARD_AMOUNT: 0.0003, // Награда за просмотр
-  REF_PERCENT: 0.15, // 15% реферальных
-  MIN_WITHDRAW: 1.00, // Минимальный вывод
-  ADMIN_PASSWORD: "AdGramAdmin777", // Пароль админки
-  DAILY_LIMIT: 30, // Лимит просмотров/день
-  COOLDOWN: 10, // КД между просмотрами (сек)
+  SECRET_KEY: "Jora1513",
+  REWARD_AMOUNT: 0.0003,
+  REF_PERCENT: 0.15,
+  MIN_WITHDRAW: 1.00,
+  ADMIN_PASSWORD: "AdGramAdmin777",
+  DAILY_LIMIT: 30,
+  COOLDOWN: 10,
   PORT: 8000
 };
 
@@ -33,7 +33,7 @@ app.use(async (ctx, next) => {
 });
 
 // Проверка авторизации
-const authMiddleware = async (ctx: any, next: any) => {
+const authMiddleware = async (ctx, next) => {
   const publicRoutes = ["/", "/health"];
   if (publicRoutes.includes(ctx.request.url.pathname)) return await next();
   
@@ -76,9 +76,9 @@ router.get("/reward", authMiddleware, async (ctx) => {
   // Проверка дневного лимита
   const today = new Date().toISOString().split("T")[0];
   const dailyKey = ["daily", userId, today];
-  const { value: views = 0 } = await kv.get<number>(dailyKey);
+  const dailyViews = (await kv.get(dailyKey)).value || 0;
 
-  if (views >= CONFIG.DAILY_LIMIT) {
+  if (dailyViews >= CONFIG.DAILY_LIMIT) {
     ctx.response.status = 429;
     ctx.response.body = { error: "Daily limit reached" };
     return;
@@ -103,7 +103,7 @@ router.get("/reward", authMiddleware, async (ctx) => {
   ctx.response.body = {
     success: true,
     reward: CONFIG.REWARD_AMOUNT,
-    daily_left: CONFIG.DAILY_LIMIT - views - 1
+    daily_left: CONFIG.DAILY_LIMIT - dailyViews - 1
   };
 });
 
@@ -117,23 +117,24 @@ router.get("/balance", authMiddleware, async (ctx) => {
     return;
   }
 
-  const [balance, refEarnings, referrals] = await Promise.all([
-    kv.get<number>(["users", userId, "balance"]),
-    kv.get<number>(["users", userId, "ref_earnings"]),
-    kv.get<number>(["users", userId, "referrals"])
-  ]);
+  const balance = (await kv.get(["users", userId, "balance"])).value || 0;
+  const refEarnings = (await kv.get(["users", userId, "ref_earnings"])).value || 0;
+  const referrals = (await kv.get(["users", userId, "referrals"])).value || 0;
 
   ctx.response.body = {
     success: true,
-    balance: balance.value || 0,
-    ref_earnings: refEarnings.value || 0,
-    referrals: referrals.value || 0
+    balance: balance,
+    ref_earnings: refEarnings,
+    referrals: referrals
   };
 });
 
 // 4. Вывод средств
 router.post("/withdraw", authMiddleware, async (ctx) => {
-  const { userId, amount, wallet } = await ctx.request.body().value;
+  const body = await ctx.request.body().value;
+  const userId = body.userId;
+  const amount = parseFloat(body.amount);
+  const wallet = body.wallet;
 
   if (!userId || !amount || !wallet) {
     ctx.response.status = 400;
@@ -147,15 +148,13 @@ router.post("/withdraw", authMiddleware, async (ctx) => {
     return;
   }
 
-  // Проверка баланса
-  const balance = (await kv.get<number>(["users", userId, "balance"])).value || 0;
+  const balance = (await kv.get(["users", userId, "balance"])).value || 0;
   if (balance < amount) {
     ctx.response.status = 400;
     ctx.response.body = { error: "Insufficient balance" };
     return;
   }
 
-  // Создание заявки
   const withdrawalId = crypto.randomUUID();
   const tx = kv.atomic()
     .set(["withdrawals", withdrawalId], {
@@ -190,7 +189,6 @@ router.get("/admin", async (ctx) => {
     return;
   }
 
-  // Статистика
   const users = [];
   for await (const entry of kv.list({ prefix: ["users"] })) {
     users.push(entry);
@@ -205,12 +203,13 @@ router.get("/admin", async (ctx) => {
     total_users: users.length,
     total_balance: users.reduce((sum, user) => sum + (user.value.balance || 0), 0),
     pending_withdrawals: withdrawals.filter(w => w.value.status === "pending").length,
-    recent_withdrawals: withdrawals
-      .slice(-10)
-      .map(w => ({
-        id: w.key[1],
-        ...w.value
-      }))
+    recent_withdrawals: withdrawals.slice(-5).map(w => ({
+      id: w.key[1],
+      amount: w.value.amount,
+      wallet: w.value.wallet,
+      status: w.value.status,
+      date: w.value.date
+    }))
   };
 });
 
@@ -218,5 +217,5 @@ router.get("/admin", async (ctx) => {
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-console.log(`🚀 Server started on port ${CONFIG.PORT}`);
+console.log(`Server running on port ${CONFIG.PORT}`);
 await app.listen({ port: CONFIG.PORT });
