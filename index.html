@@ -549,143 +549,308 @@
   </div>
 
 <script>
-// Конфигурация с улучшенной защитой
+// Конфигурация
 const CONFIG = {
-  rewardPerAd: 0.0003, // $0.0003 за просмотр
-  hourlyLimit: 30,      // 30 просмотров
-  minWithdraw: 1.00,    // Минимальный вывод $1
-  referralPercent: 0.15,// 15% реферальных
+  rewardPerAd: 0.0003,
+  dailyLimit: 30,
+  minWithdraw: 1.00,
+  referralPercent: 0.15,
   adminPassword: "8223Nn8223",
-  adCooldown: 10,       // 10 сек между просмотрами
-  cooldown: 10800,      // 3 часа (10800 сек) сброс лимита
-  security: {
-    antiCheat: true,
-    dataSigning: true,
-    secretSalt: "d2h5IHNvIHNlcmlvdXM/" 
-  }
+  adCooldown: 10,
+  apiUrl: "https://carfix77-rewarded-22.deno.dev" // Ваш сервер Deno Deploy
 };
 
-// Глобальные задачи (хранятся отдельно)
-let GLOBAL_TASKS = [];
-
-// Состояние приложения с защитой
+// Глобальное состояние
 const state = {
   userId: null,
   balance: 0,
   adViews: 0,
   isAdBlocked: false,
-  lastAdTime: 0,
+  lastAdTime: null,
   isAdmin: false,
   referrals: 0,
   referralEarnings: 0,
   referrer: null,
-  activeTask: null,
-  taskStartTime: 0,
   completedTasks: [],
-  withdrawals: [],
-  _security: {
-    lastHash: null,
-    timers: {}
-  }
+  adminToken: null,
+  tasks: []
 };
 
-// Улучшенная система хранения с защитой
-const SecureStorage = {
-  async set(key, value) {
-    if (CONFIG.security.dataSigning) {
-      value._signature = await this._generateSignature(value);
-      value._timestamp = Date.now();
-    }
-    localStorage.setItem(key, JSON.stringify(value));
-  },
-
-  async get(key) {
-    const data = JSON.parse(localStorage.getItem(key));
-    if (!data) return null;
-
-    if (CONFIG.security.dataSigning) {
-      if (!await this._verifySignature(data)) {
-        console.error("Обнаружена подмена данных!");
-        return null;
-      }
-    }
-    return data;
-  },
-
-  list(prefix) {
-    const result = [];
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key.startsWith(prefix)) {
-          const data = JSON.parse(localStorage.getItem(key));
-          if (data) result.push(data);
-        }
-      }
-    } catch (e) {
-      console.error('Storage list error:', e);
-    }
-    return result;
-  },
-
-  async _generateSignature(data) {
-    const str = JSON.stringify(data) + CONFIG.security.secretSalt;
-    const encoder = new TextEncoder();
-    const hash = await crypto.subtle.digest('SHA-256', encoder.encode(str));
-    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-  },
-
-  async _verifySignature(data) {
-    const signature = data._signature;
-    delete data._signature; // Удаляем перед проверкой
-    const check = await this._generateSignature(data);
-    data._signature = signature; // Возвращаем обратно
-    return signature === check;
+// Инициализация пользователя
+async function initUser() {
+  if (window.Telegram && Telegram.WebApp.initDataUnsafe?.user?.id) {
+    state.userId = 'tg_' + Telegram.WebApp.initDataUnsafe.user.id;
+  } else {
+    state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
   }
-};
 
-// Защита от накрутки
-const AntiCheat = {
-  checkTimeManipulation() {
-    const realTime = new Date().getTime();
-    const clientTime = Date.now();
-    return Math.abs(realTime - clientTime) > 10000;
-  },
+  await loadUserData();
+  checkReferral();
+}
 
-  checkFrequency(action, delay) {
-    const now = Date.now();
-    if (!state._security.timers[action]) {
-      state._security.timers[action] = now;
-      return true;
+// Загрузка данных пользователя
+async function loadUserData() {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}`);
+    if (response.ok) {
+      const userData = await response.json();
+      Object.assign(state, userData);
+      updateUI();
+    } else {
+      console.error("Ошибка загрузки данных пользователя");
     }
-
-    if (now - state._security.timers[action] < delay) {
-      return false;
-    }
-
-    state._security.timers[action] = now;
-    return true;
+  } catch (error) {
+    console.error("Ошибка сети:", error);
   }
-};
+}
 
-// ====== Функции для работы с заявками на вывод ======
+// Проверка реферальной ссылки
+function checkReferral() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const ref = urlParams.get('ref');
+  if (ref && !state.referrer && ref !== state.userId) {
+    state.referrer = ref;
+    saveUserData();
+  }
+}
+
+// Просмотр рекламы
+async function startAd() {
+  if (state.isAdBlocked) {
+    alert("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
+    return;
+  }
+
+  const btn = document.getElementById('watch-ad-btn');
+  btn.disabled = true;
+  btn.textContent = "⏳ Идет показ рекламы...";
+
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}/watch-ad`, {
+      method: 'POST'
+    });
+
+    if (response.ok) {
+      const userData = await response.json();
+      Object.assign(state, userData);
+      updateUI();
+      alert(`+$${CONFIG.rewardPerAd.toFixed(3)} за просмотр!`);
+    } else {
+      const error = await response.json();
+      alert(error.error || "Ошибка при просмотре рекламы");
+    }
+  } catch (error) {
+    console.error("Ошибка сети:", error);
+    alert("Ошибка соединения");
+  } finally {
+    btn.textContent = "🎥 Смотреть рекламу (+$0.0003)";
+    btn.disabled = state.isAdBlocked;
+  }
+}
+
+// Загрузка заданий
+async function loadTasks() {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/tasks`);
+    if (response.ok) {
+      state.tasks = await response.json();
+      renderTasks();
+    }
+  } catch (error) {
+    console.error("Ошибка загрузки заданий:", error);
+  }
+}
+
+// Отображение заданий
+function renderTasks() {
+  const container = document.getElementById('tasks-list');
+  container.innerHTML = '';
+
+  if (state.tasks.length === 0) {
+    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет доступных заданий</p>';
+    return;
+  }
+
+  state.tasks.forEach(task => {
+    const isCompleted = state.completedTasks.includes(task.id);
+    const taskEl = document.createElement('div');
+    taskEl.className = 'task';
+    taskEl.innerHTML = `
+      <h3>${task.title} ($${task.reward.toFixed(2)})</h3>
+      <p style="white-space: pre-line;">${task.description}</p>
+      <button 
+        onclick="startTask('${task.id}')" 
+        ${isCompleted ? 'disabled' : ''}
+        class="btn ${isCompleted ? 'btn-disabled' : ''}"
+      >
+        ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
+      </button>
+    `;
+    container.appendChild(taskEl);
+  });
+}
+
+// Начало выполнения задания
+async function startTask(taskId) {
+  const task = state.tasks.find(t => t.id === taskId);
+  if (!task) return;
+
+  if (state.completedTasks.includes(taskId)) {
+    alert("Вы уже выполнили это задание!");
+    return;
+  }
+
+  window.open(task.url, '_blank');
+  alert(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
+  
+  // Проверяем выполнение задания через заданное время
+  setTimeout(async () => {
+    await completeTask(taskId);
+  }, task.cooldown * 1000);
+}
+
+// Завершение задания
+async function completeTask(taskId) {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}/complete-task`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ taskId })
+    });
+
+    if (response.ok) {
+      const userData = await response.json();
+      Object.assign(state, userData);
+      updateUI();
+      renderTasks();
+      alert("Задание выполнено!");
+    } else {
+      const error = await response.json();
+      alert(error.error || "Ошибка при выполнении задания");
+    }
+  } catch (error) {
+    console.error("Ошибка сети:", error);
+    alert("Ошибка соединения");
+  }
+}
+
+// Создание заявки на вывод
+async function submitWithdrawal() {
+  const wallet = document.getElementById('wallet').value.trim();
+  const amount = parseFloat(document.getElementById('amount').value);
+
+  if (!/^P\d{7,}$/.test(wallet)) {
+    alert("Кошелек PAYEER должен начинаться с P и содержать минимум 8 цифр");
+    return;
+  }
+
+  if (isNaN(amount) || amount < CONFIG.minWithdraw) {
+    alert(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
+    return;
+  }
+
+  if (amount > state.balance) {
+    alert(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
+    return;
+  }
+
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/withdrawals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        userId: state.userId,
+        wallet: wallet,
+        amount: amount
+      })
+    });
+
+    if (response.ok) {
+      const withdrawal = await response.json();
+      state.balance -= amount;
+      
+      document.getElementById('wallet').value = '';
+      document.getElementById('amount').value = '';
+      
+      alert(`Заявка #${withdrawal.id} на $${amount.toFixed(2)} создана!`);
+      updateUI();
+      showPage('main-page');
+    } else {
+      const error = await response.json();
+      alert(error.error || "Ошибка при создании заявки");
+    }
+  } catch (error) {
+    console.error("Ошибка сети:", error);
+    alert("Ошибка соединения");
+  }
+}
+
+// Админ-функции
+async function checkAdminPassword() {
+  const password = document.getElementById('admin-password').value;
+  if (password !== CONFIG.adminPassword) {
+    alert("Неверный пароль!");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ password })
+    });
+
+    if (response.ok) {
+      const { token } = await response.json();
+      state.adminToken = token;
+      hideAdminLogin();
+      showAdminPanel();
+      loadWithdrawals();
+      loadAdminTasks();
+    } else {
+      alert("Ошибка авторизации");
+    }
+  } catch (error) {
+    console.error("Ошибка сети:", error);
+    alert("Ошибка соединения");
+  }
+}
+
 async function loadWithdrawals(filter = 'pending') {
-  const withdrawals = SecureStorage.list('withdrawal_');
-  const filtered = withdrawals.filter(w => w.status === filter);
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/admin/withdrawals?status=${filter}`, {
+      headers: {
+        'Authorization': `Bearer ${state.adminToken}`
+      }
+    });
 
+    if (response.ok) {
+      const withdrawals = await response.json();
+      renderWithdrawals(withdrawals, filter);
+    }
+  } catch (error) {
+    console.error("Ошибка загрузки заявок:", error);
+  }
+}
+
+function renderWithdrawals(withdrawals, filter) {
   const container = document.getElementById('withdrawals-list');
   container.innerHTML = '';
 
-  if (filtered.length === 0) {
+  if (withdrawals.length === 0) {
     container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет заявок</p>';
     return;
   }
 
-  filtered.forEach(withdrawal => {
+  withdrawals.forEach(withdrawal => {
     const item = document.createElement('div');
     item.className = 'withdrawal-item';
-
-    const userData = SecureStorage.get(withdrawal.userId) || { balance: 0 };
 
     item.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -698,7 +863,7 @@ async function loadWithdrawals(filter = 'pending') {
       <div style="margin: 8px 0; font-size: 14px;">
         <div>Кошелек: ${withdrawal.wallet}</div>
         <div>Пользователь: ${withdrawal.userId}</div>
-        <div>Баланс: $${userData.balance.toFixed(2)}</div>
+        <div>Баланс: $${withdrawal.user?.balance?.toFixed(2) || '0.00'}</div>
         <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
       </div>
       ${withdrawal.status === 'pending' ? `
@@ -723,171 +888,56 @@ function getStatusText(status) {
 }
 
 async function processWithdrawal(id, action) {
-  const withdrawal = await SecureStorage.get('withdrawal_' + id);
-  if (!withdrawal) return;
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/admin/withdrawals/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.adminToken}`
+      },
+      body: JSON.stringify({ status: action })
+    });
 
-  if (action === 'completed') {
-    withdrawal.status = 'completed';
-    await SecureStorage.set('withdrawal_' + id, withdrawal);
-    alert(`Заявка #${id} оплачена!`);
-  } 
-  else if (action === 'rejected') {
-    const userData = await SecureStorage.get(withdrawal.userId);
-    if (userData) {
-      userData.balance += withdrawal.amount; // Возвращаем средства
-      await SecureStorage.set(withdrawal.userId, userData);
-    }
-
-    withdrawal.status = 'rejected';
-    await SecureStorage.set('withdrawal_' + id, withdrawal);
-    alert(`Заявка #${id} отклонена! Средства возвращены.`);
-  }
-
-  loadWithdrawals('pending');
-}
-
-// ====== Функции заданий ======
-async function loadGlobalTasks() {
-  const tasks = await SecureStorage.get('global_tasks');
-  if (tasks && tasks.length > 0) {
-    GLOBAL_TASKS = tasks;
-  } else {
-    GLOBAL_TASKS = [];
-    await SecureStorage.set('global_tasks', GLOBAL_TASKS);
-  }
-}
-
-function renderTasks() {
-  const container = document.getElementById('tasks-list');
-  container.innerHTML = '';
-
-  if (GLOBAL_TASKS.length === 0) {
-    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет доступных заданий</p>';
-    return;
-  }
-
-  GLOBAL_TASKS.forEach(task => {
-    const isCompleted = state.completedTasks.includes(task.id);
-
-    const taskEl = document.createElement('div');
-    taskEl.className = 'task';
-    taskEl.innerHTML = `
-      <h3>${task.title} ($${task.reward.toFixed(2)})</h3>
-      <p style="white-space: pre-line;">${task.description}</p>
-      <button 
-        onclick="startTask('${task.id}')" 
-        ${isCompleted ? 'disabled' : ''}
-        class="btn ${isCompleted ? 'btn-disabled' : ''}"
-      >
-        ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
-      </button>
-    `;
-    container.appendChild(taskEl);
-  });
-}
-
-async function startTask(taskId) {
-  if (CONFIG.security.antiCheat && AntiCheat.checkTimeManipulation()) {
-    alert("Обнаружена попытка обмана системы!");
-    resetToDefault();
-    return;
-  }
-
-  const task = GLOBAL_TASKS.find(t => t.id === taskId);
-
-  if (!task) {
-    alert("Задание не найдено!");
-    return;
-  }
-
-  if (state.completedTasks.includes(taskId)) {
-    alert("Вы уже выполнили это задание!");
-    return;
-  }
-
-  state.activeTask = taskId;
-  state.taskStartTime = Date.now();
-  await saveState();
-
-  window.open(task.url, '_blank');
-  alert(`У вас есть ${task.cooldown} секунд на выполнение! Вернитесь после этого.`);
-}
-
-async function checkActiveTask() {
-  if (state.activeTask) {
-    const task = GLOBAL_TASKS.find(t => t.id === state.activeTask);
-    if (!task) {
-      state.activeTask = null;
-      return;
-    }
-
-    const timePassed = (Date.now() - state.taskStartTime) / 1000;
-
-    if (timePassed >= task.cooldown) {
-      await completeTask(state.activeTask);
+    if (response.ok) {
+      alert(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}!`);
+      loadWithdrawals('pending');
     } else {
-      alert(`Вернитесь через ${Math.ceil(task.cooldown - timePassed)} секунд!`);
+      const error = await response.json();
+      alert(error.error || "Ошибка при обработке заявки");
     }
+  } catch (error) {
+    console.error("Ошибка сети:", error);
+    alert("Ошибка соединения");
   }
 }
 
-async function completeTask(taskId) {
-  const task = GLOBAL_TASKS.find(t => t.id === taskId);
+async function loadAdminTasks() {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/admin/tasks`, {
+      headers: {
+        'Authorization': `Bearer ${state.adminToken}`
+      }
+    });
 
-  if (!task) {
-    alert("Задание не найдено!");
-    return;
-  }
-
-  state.balance += task.reward;
-  state.completedTasks.push(taskId);
-  state.activeTask = null;
-  await saveState();
-
-  alert(`✅ Задание выполнено! +$${task.reward.toFixed(2)}`);
-  updateUI();
-  renderTasks();
-}
-
-// ====== Админ-панель ======
-function showAdminLogin() {
-  document.getElementById('admin-login').classList.remove('hidden');
-}
-
-function hideAdminLogin() {
-  document.getElementById('admin-login').classList.add('hidden');
-  document.getElementById('admin-password').value = '';
-}
-
-async function checkAdminPassword() {
-  const password = document.getElementById('admin-password').value;
-  if (password === CONFIG.adminPassword) {
-    state.isAdmin = true;
-    hideAdminLogin();
-    document.getElementById('admin-panel').classList.remove('hidden');
-    loadWithdrawals();
-    renderAdminTasks();
-  } else {
-    alert("Неверный пароль!");
-    document.getElementById('admin-password').value = '';
+    if (response.ok) {
+      state.tasks = await response.json();
+      renderAdminTasks();
+    }
+  } catch (error) {
+    console.error("Ошибка загрузки заданий:", error);
   }
 }
 
-function hideAdminPanel() {
-  document.getElementById('admin-panel').classList.add('hidden');
-}
-
-async function renderAdminTasks() {
-  await loadGlobalTasks();
+function renderAdminTasks() {
   const container = document.getElementById('current-tasks');
   container.innerHTML = '';
 
-  if (GLOBAL_TASKS.length === 0) {
+  if (state.tasks.length === 0) {
     container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет созданных заданий</p>';
     return;
   }
 
-  GLOBAL_TASKS.forEach((task, index) => {
+  state.tasks.forEach((task, index) => {
     const taskEl = document.createElement('div');
     taskEl.className = 'admin-task';
     taskEl.innerHTML = `
@@ -907,12 +957,11 @@ async function renderAdminTasks() {
 
 async function addTask() {
   const newTask = {
-    id: 'task_' + Date.now(),
     title: document.getElementById('new-task-title').value,
     reward: parseFloat(document.getElementById('new-task-reward').value),
     description: document.getElementById('new-task-desc').value,
     url: document.getElementById('new-task-url').value,
-    cooldown: parseInt(document.getElementById('new-task-cooldown').value)
+    cooldown: parseInt(document.getElementById('new-task-cooldown').value) || 10
   };
 
   if (!newTask.title || !newTask.reward || !newTask.description || !newTask.url) {
@@ -920,222 +969,86 @@ async function addTask() {
     return;
   }
 
-  GLOBAL_TASKS.push(newTask);
-  await SecureStorage.set('global_tasks', GLOBAL_TASKS);
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/admin/tasks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.adminToken}`
+      },
+      body: JSON.stringify(newTask)
+    });
 
-  // Очищаем поля
-  document.getElementById('new-task-title').value = '';
-  document.getElementById('new-task-reward').value = '';
-  document.getElementById('new-task-desc').value = '';
-  document.getElementById('new-task-url').value = '';
-  document.getElementById('new-task-cooldown').value = '10';
-
-  renderAdminTasks();
-  alert("Задание добавлено и доступно всем пользователям!");
+    if (response.ok) {
+      const task = await response.json();
+      state.tasks.push(task);
+      
+      // Очищаем поля
+      document.getElementById('new-task-title').value = '';
+      document.getElementById('new-task-reward').value = '';
+      document.getElementById('new-task-desc').value = '';
+      document.getElementById('new-task-url').value = '';
+      document.getElementById('new-task-cooldown').value = '10';
+      
+      renderAdminTasks();
+      alert("Задание добавлено!");
+    } else {
+      const error = await response.json();
+      alert(error.error || "Ошибка при добавлении задания");
+    }
+  } catch (error) {
+    console.error("Ошибка сети:", error);
+    alert("Ошибка соединения");
+  }
 }
 
 async function deleteTask(index) {
-  GLOBAL_TASKS.splice(index, 1);
-  await SecureStorage.set('global_tasks', GLOBAL_TASKS);
-  renderAdminTasks();
-  alert("Задание удалено!");
-}
+  const taskId = state.tasks[index].id;
+  
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/admin/tasks/${taskId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${state.adminToken}`
+      }
+    });
 
-// ====== Основные функции ======
-async function initUser() {
-  if (window.Telegram && Telegram.WebApp.initDataUnsafe?.user?.id) {
-    state.userId = 'tg_' + Telegram.WebApp.initDataUnsafe.user.id;
-  } else {
-    state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
-  }
-
-  await loadState();
-}
-
-async function loadState() {
-  const saved = await SecureStorage.get(state.userId);
-  if (saved) {
-    Object.assign(state, saved);
-
-    // Проверяем, прошло ли 3 часа с последнего просмотра
-    if (state.lastAdTime && (Date.now() - new Date(state.lastAdTime).getTime() > 10800000)) {
-      state.adViews = 0;
-      state.isAdBlocked = false;
-      state.adTimer = 0;
+    if (response.ok) {
+      state.tasks.splice(index, 1);
+      renderAdminTasks();
+      alert("Задание удалено!");
+    } else {
+      const error = await response.json();
+      alert(error.error || "Ошибка при удалении задания");
     }
-  }
-
-  checkReferral();
-  updateUI();
-}
-
-function checkReferral() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const ref = urlParams.get('ref');
-  if (ref && !state.referrer && ref !== state.userId) {
-    state.referrer = ref;
-    const referrerData = SecureStorage.get(ref);
-    if (referrerData) {
-      referrerData.referrals += 1;
-      SecureStorage.set(ref, referrerData);
-    }
-    saveState();
+  } catch (error) {
+    console.error("Ошибка сети:", error);
+    alert("Ошибка соединения");
   }
 }
 
-async function saveState() {
-  await SecureStorage.set(state.userId, {
-    balance: state.balance,
-    adViews: state.adViews,
-    isAdBlocked: state.isAdBlocked,
-    adTimer: state.adTimer,
-    lastAdTime: state.lastAdTime,
-    referrals: state.referrals,
-    referralEarnings: state.referralEarnings,
-    referrer: state.referrer,
-    activeTask: state.activeTask,
-    taskStartTime: state.taskStartTime,
-    completedTasks: state.completedTasks,
-    lastAdTimestamp: state.lastAdTimestamp
-  });
-}
-
+// Общие функции
 function updateUI() {
   document.getElementById('balance').textContent = '$' + state.balance.toFixed(3);
   document.getElementById('available-balance').textContent = '$' + state.balance.toFixed(3);
   document.getElementById('ad-counter').textContent = state.adViews;
-  document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.hourlyLimit) * 100}%`;
+  document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
   document.getElementById('referral-count').textContent = state.referrals;
   document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
   document.getElementById('referral-link').textContent = `${window.location.href.split('?')[0]}?ref=${state.userId}`;
 
   const btn = document.getElementById('watch-ad-btn');
   btn.disabled = state.isAdBlocked;
-
-  if (state.isAdBlocked) {
-    const mins = Math.floor(state.adTimer / 60);
-    const secs = state.adTimer % 60;
-    document.getElementById('ad-timer').textContent = `Доступно через: ${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  } else {
-    document.getElementById('ad-timer').textContent = '';
-  }
-}
-
-async function startAd() {
-  if (CONFIG.security.antiCheat) {
-    if (AntiCheat.checkTimeManipulation()) {
-      alert("Обнаружена попытка обмана системы!");
-      resetToDefault();
-      return;
-    }
-
-    if (!AntiCheat.checkFrequency('ad_view', CONFIG.adCooldown * 1000)) {
-      alert(`Подождите ${CONFIG.adCooldown} секунд!`);
-      return;
-    }
-  }
-
-  const now = Date.now();
-  const timeSinceLastAd = (now - state.lastAdTimestamp) / 1000;
-
-  if (timeSinceLastAd < CONFIG.adCooldown) {
-    const remainingTime = Math.ceil(CONFIG.adCooldown - timeSinceLastAd);
-    alert(`Подождите еще ${remainingTime} секунд перед следующим просмотром рекламы.`);
-    return;
-  }
-
-  if (state.isAdBlocked) {
-    const mins = Math.floor(state.adTimer / 60);
-    const secs = state.adTimer % 60;
-    alert(`Вы исчерпали лимит просмотров. Попробуйте через ${mins}:${secs < 10 ? '0' : ''}${secs}`);
-    return;
-  }
-
-  const btn = document.getElementById('watch-ad-btn');
-  btn.disabled = true;
-  btn.textContent = "⏳ Идет показ рекламы...";
-
-  setTimeout(async () => {
-    if (Math.random() < 0.8) {
-      await completeAdView();
-    } else {
-      btn.textContent = "🎥 Смотреть рекламу (+$0.0003)";
-      btn.disabled = false;
-      alert("Реклама не была досмотрена. Попробуйте еще раз.");
-    }
-  }, 5000);
-}
-
-async function completeAdView() {
-  const now = Date.now();
-  state.lastAdTimestamp = now;
-  state.adViews++;
-  state.balance += CONFIG.rewardPerAd;
-  state.lastAdTime = new Date().toISOString();
-
-  if (state.adViews >= CONFIG.hourlyLimit) {
-    state.isAdBlocked = true;
-    state.adTimer = CONFIG.cooldown;
-
-    // Запускаем таймер сброса лимита
-    setTimeout(() => {
-      state.adViews = 0;
-      state.isAdBlocked = false;
-      state.adTimer = 0;
-      saveState();
-      updateUI();
-    }, CONFIG.cooldown * 1000);
-  }
-
-  await saveState();
-  updateUI();
-
-  document.getElementById('watch-ad-btn').textContent = "🎥 Смотреть рекламу (+$0.0003)";
-  alert(`+$${CONFIG.rewardPerAd.toFixed(3)} за просмотр!`);
-
-  startAdCooldownTimer();
-}
-
-function startAdCooldownTimer() {
-  const btn = document.getElementById('watch-ad-btn');
-  btn.disabled = true;
-
-  let remaining = CONFIG.adCooldown;
-  updateAdButtonText(remaining);
-
-  const timer = setInterval(() => {
-    remaining--;
-    updateAdButtonText(remaining);
-
-    if (remaining <= 0) {
-      clearInterval(timer);
-      btn.disabled = state.isAdBlocked;
-      btn.textContent = "🎥 Смотреть рекламу (+$0.0003)";
-    }
-  }, 1000);
-}
-
-function updateAdButtonText(seconds) {
-  const btn = document.getElementById('watch-ad-btn');
-  btn.textContent = `⌛ Доступно через: ${seconds} сек`;
 }
 
 function showPage(pageId) {
-  // Скрываем все страницы
   document.querySelectorAll('.page').forEach(page => {
     page.classList.remove('active');
   });
-  
-  // Показываем нужную страницу
   document.getElementById(pageId).classList.add('active');
   
-  // Обновляем данные на странице, если необходимо
   if (pageId === 'tasks-page') {
-    renderTasks();
-  } else if (pageId === 'referral-page') {
-    // Можно добавить дополнительную логику для реферальной страницы
-  } else if (pageId === 'withdraw-page') {
-    // Можно добавить дополнительную логику для страницы вывода
+    loadTasks();
   }
 }
 
@@ -1146,105 +1059,41 @@ function copyReferralLink() {
   });
 }
 
-async function submitWithdrawal() {
-  const wallet = document.getElementById('wallet').value.trim();
-  const amount = parseFloat(document.getElementById('amount').value);
-
-  if (!/^P\d{7,}$/.test(wallet)) {
-    alert("Кошелек PAYEER должен начинаться с P и содержать минимум 8 цифр");
-    return;
-  }
-
-  if (isNaN(amount) || amount < CONFIG.minWithdraw) {
-    alert(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
-    return;
-  }
-
-  if (amount > state.balance) {
-    alert(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
-    return;
-  }
-
-  const withdrawal = {
-    id: Date.now().toString(),
-    userId: state.userId,
-    wallet: wallet,
-    amount: amount,
-    status: "pending",
-    date: new Date().toISOString()
-  };
-
-  if (state.referrer) {
-    const referralBonus = amount * CONFIG.referralPercent;
-    const referrerData = await SecureStorage.get(state.referrer);
-    if (referrerData) {
-      referrerData.referralEarnings += referralBonus;
-      await SecureStorage.set(state.referrer, referrerData);
-      alert(`Ваш реферер получит +$${referralBonus.toFixed(3)} от вашего вывода!`);
-    }
-  }
-
-  // Сохраняем заявку с префиксом 'withdrawal_'
-  await SecureStorage.set('withdrawal_' + withdrawal.id, withdrawal);
-
-  state.balance -= amount;
-  await saveState();
-
-  document.getElementById('wallet').value = '';
-  document.getElementById('amount').value = '';
-
-  alert(`Заявка #${withdrawal.id} на $${amount.toFixed(2)} создана!`);
-  updateUI();
-  showPage('main-page');
+function showAdminLogin() {
+  document.getElementById('admin-login').classList.remove('hidden');
 }
 
-function resetToDefault() {
-  state.balance = 0;
-  state.adViews = 0;
-  state.isAdBlocked = false;
-  state.adTimer = 0;
-  state.lastAdTime = null;
-  state.completedTasks = [];
-  saveState();
-  updateUI();
+function hideAdminLogin() {
+  document.getElementById('admin-login').classList.add('hidden');
+  document.getElementById('admin-password').value = '';
 }
 
-// ====== Инициализация ======
+function showAdminPanel() {
+  document.getElementById('admin-panel').classList.remove('hidden');
+}
+
+function hideAdminPanel() {
+  document.getElementById('admin-panel').classList.add('hidden');
+}
+
+// Инициализация приложения
 async function init() {
   setTimeout(() => {
     document.getElementById('splash-screen').style.opacity = '0';
     setTimeout(async () => {
       document.getElementById('splash-screen').style.display = 'none';
-
+      
       // Инициализация пользователя
       await initUser();
-
-      // Загружаем глобальные задачи
-      await loadGlobalTasks();
-
+      
       // Назначаем обработчики
-      document.getElementById('secret-admin-btn').addEventListener('click', function() {
-        showAdminLogin();
-      });
-
+      document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
+      
       document.addEventListener('keydown', (e) => {
         if (e.ctrlKey && e.altKey && e.key === 'a') {
           showAdminLogin();
         }
       });
-
-      // Проверяем активное задание при загрузке
-      checkActiveTask();
-
-      // Защита от отладки
-      if (CONFIG.security.antiCheat) {
-        setInterval(() => {
-          if (window.console && console.log) {
-            console.clear();
-            console.log("%cСистема защищена", "color:red;font-size:20px");
-          }
-        }, 1000);
-      }
     }, 500);
   }, 2000);
 }
