@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,14 +15,20 @@
       --text-color: #e0f0e8;
       --secondary-text: #8fa89a;
       --accent-color: #3d9970;
+      --error-color: #c0392b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
 
     body {
-      font-family: 'Segoe UI', Roboto, sans-serif;
-      margin: 0;
-      padding: 0;
+      font-family: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
       background-color: var(--bg-color);
       color: var(--text-color);
+      line-height: 1.6;
     }
 
     .container {
@@ -36,7 +42,7 @@
       border-radius: 16px;
       padding: 20px;
       margin-bottom: 20px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
       border: 1px solid var(--primary-dark);
     }
 
@@ -51,10 +57,11 @@
       font-size: 17px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.3s;
+      transition: all 0.3s ease;
       display: flex;
       align-items: center;
       justify-content: center;
+      gap: 8px;
     }
 
     .btn:hover {
@@ -69,7 +76,7 @@
     }
 
     .btn-secondary {
-      background-color: var(--card-color);
+      background-color: transparent;
       color: var(--accent-color);
       border: 2px solid var(--accent-color);
     }
@@ -78,17 +85,8 @@
       background-color: rgba(61, 153, 112, 0.1);
     }
 
-    .btn-disabled {
-      background-color: var(--secondary-text);
-    }
-
-    .reject-btn {
-      background-color: #c0392b;
-      color: white;
-      border: none;
-      padding: 8px 12px;
-      border-radius: 6px;
-      cursor: pointer;
+    .btn-danger {
+      background-color: var(--error-color);
     }
 
     .balance {
@@ -101,11 +99,6 @@
       font-weight: 700;
       color: var(--accent-color);
       margin: 10px 0;
-    }
-
-    .balance-label {
-      font-size: 16px;
-      color: var(--secondary-text);
     }
 
     .progress-container {
@@ -123,14 +116,7 @@
       height: 100%;
       background: linear-gradient(90deg, var(--primary-color), var(--accent-color));
       width: 0%;
-      transition: width 0.3s;
-    }
-
-    .progress-text {
-      display: flex;
-      justify-content: space-between;
-      font-size: 14px;
-      margin-bottom: 8px;
+      transition: width 0.3s ease;
     }
 
     .referral-stats {
@@ -154,14 +140,14 @@
       color: var(--accent-color);
     }
 
-    .referral-link {
+    .referral-link-container {
       background-color: var(--bg-color);
       border-radius: 12px;
       padding: 16px;
-      word-break: break-all;
-      text-align: center;
       margin: 20px 0;
       border: 1px solid var(--primary-dark);
+      word-break: break-all;
+      text-align: center;
     }
 
     .withdrawal-item {
@@ -172,57 +158,24 @@
       background-color: var(--card-color);
     }
 
-    .admin-actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 10px;
-    }
-
-    .approve-btn {
-      background-color: var(--primary-color);
-      color: white;
-      border: none;
-      padding: 8px;
-      border-radius: 6px;
-      flex: 1;
-      cursor: pointer;
-    }
-
-    .reject-btn {
-      background-color: #c0392b;
-      color: white;
-      border: none;
-      padding: 8px;
-      border-radius: 6px;
-      flex: 1;
-      cursor: pointer;
-    }
-
-    .task {
+    .task-item {
       margin-bottom: 20px;
       padding-bottom: 20px;
       border-bottom: 1px solid var(--primary-dark);
     }
 
-    .admin-task {
+    .admin-task-item {
       margin-bottom: 15px;
       padding: 15px;
-      background: rgba(0,0,0,0.1);
+      background: rgba(0, 0, 0, 0.1);
       border-radius: 8px;
       border: 1px solid var(--primary-dark);
     }
 
-    #secret-admin-btn {
-      position: fixed;
-      bottom: 10px;
-      right: 10px;
-      width: 40px;
-      height: 40px;
-      opacity: 0.05;
-      cursor: pointer;
-      z-index: 1000;
-      background: transparent;
-      border: none;
+    .admin-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
     }
 
     #splash-screen {
@@ -237,7 +190,7 @@
       justify-content: center;
       align-items: center;
       z-index: 1000;
-      transition: opacity 0.5s;
+      transition: opacity 0.5s ease;
     }
 
     .splash-logo {
@@ -249,13 +202,8 @@
       justify-content: center;
       align-items: center;
       margin-bottom: 30px;
-      animation: pulse 1.5s infinite;
-    }
-
-    .splash-logo svg {
-      width: 60px;
-      height: 60px;
-      fill: var(--primary-dark);
+      animation: pulse 1.5s infinite ease-in-out;
+      font-size: 50px;
     }
 
     .splash-text {
@@ -275,17 +223,86 @@
       display: none !important;
     }
 
-    #admin-login {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0,0,0,0.8);
-      z-index: 1001;
+    .page {
+      display: none;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--accent-color);
+      font-size: 16px;
       display: flex;
-      justify-content: center;
       align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      margin-bottom: 20px;
+      padding: 5px;
+    }
+
+    .back-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 14px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--primary-dark);
+      font-family: inherit;
+      background-color: var(--card-color);
+      color: var(--text-color);
+      font-size: 16px;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+
+    .status-badge {
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 8px;
+      display: inline-block;
+    }
+
+    .status-pending {
+      background-color: #f39c12;
+      color: white;
+    }
+
+    .status-completed {
+      background-color: var(--primary-color);
+      color: white;
+    }
+
+    .status-rejected {
+      background-color: var(--error-color);
+      color: white;
+    }
+
+    h1, h2, h3 {
+      margin-bottom: 15px;
+      color: var(--text-color);
+    }
+
+    p {
+      margin-bottom: 10px;
     }
 
     #admin-panel {
@@ -300,96 +317,63 @@
       padding: 20px;
     }
 
-    textarea {
-      width: 100%;
-      padding: 14px;
-      margin-bottom: 12px;
-      border-radius: 8px;
-      border: 1px solid var(--primary-dark);
-      font-family: inherit;
-      background-color: var(--card-color);
-      color: var(--text-color);
+    #secret-admin-btn {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      width: 40px;
+      height: 40px;
+      opacity: 0.05;
+      cursor: pointer;
+      z-index: 1000;
+      background: transparent;
+      border: none;
     }
 
-    input {
-      width: 100%;
-      padding: 14px;
-      margin-bottom: 12px;
-      border-radius: 8px;
-      border: 1px solid var(--primary-dark);
-      font-family: inherit;
-      background-color: var(--card-color);
-      color: var(--text-color);
-    }
-
-    .status-badge {
-      padding: 4px 8px;
-      border-radius: 12px;
-      font-size: 12px;
-      font-weight: bold;
-      margin-left: 8px;
-    }
-
-    .status-pending {
-      background-color: #f39c12;
-      color: white;
-    }
-
-    .status-completed {
+    .copy-notification {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
       background-color: var(--primary-color);
       color: white;
-    }
-
-    .status-rejected {
-      background-color: #c0392b;
-      color: white;
-    }
-
-    /* Страницы */
-    .page {
+      padding: 10px 20px;
+      border-radius: 8px;
+      z-index: 1001;
+      animation: fadeInOut 2s ease;
       display: none;
-      animation: fadeIn 0.3s;
     }
 
-    .page.active {
-      display: block;
+    @keyframes fadeInOut {
+      0% { opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; }
     }
 
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .back-btn {
-      background: none;
-      border: none;
+    .task-reward {
       color: var(--accent-color);
-      font-size: 16px;
-      display: flex;
-      align-items: center;
-      cursor: pointer;
-      margin-bottom: 20px;
+      font-weight: bold;
     }
 
-    .back-btn svg {
-      margin-right: 5px;
+    .admin-section {
+      margin-bottom: 30px;
     }
   </style>
 </head>
 <body>
-  <!-- Заставка -->
+  <!-- Splash Screen -->
   <div id="splash-screen">
-    <div class="splash-logo">
-      <svg viewBox="0 0 24 24">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-      </svg>
-    </div>
+    <div class="splash-logo">💰</div>
     <div class="splash-text">AdRewards</div>
   </div>
 
-  <!-- Основной интерфейс -->
+  <!-- Notification -->
+  <div id="copy-notification" class="copy-notification">Скопировано!</div>
+
+  <!-- Main App -->
   <div class="container">
-    <!-- Главная страница -->
+    <!-- Main Page -->
     <div id="main-page" class="page active">
       <div class="card">
         <div class="balance">
@@ -397,14 +381,13 @@
           <div class="balance-amount" id="balance">$0.000</div>
         </div>
 
-        <button class="btn" id="watch-ad-btn" onclick="startAd()">
-          🎥 Смотреть рекламу (+$0.0003)
+        <button class="btn" id="watch-ad-btn">
+          <span>🎥</span> Смотреть рекламу (+$0.0003)
         </button>
 
         <div class="progress-container">
           <div class="progress-text">
             <span>Просмотров: <span id="ad-counter">0</span>/30</span>
-            <span id="ad-timer"></span>
           </div>
           <div class="progress-bar">
             <div class="progress-fill" id="ad-progress"></div>
@@ -414,36 +397,33 @@
 
       <div class="card">
         <button class="btn" onclick="showPage('withdraw-page')">
-          💳 Вывести средства
+          <span>💳</span> Вывести средства
         </button>
-
         <button class="btn btn-secondary" onclick="showPage('referral-page')">
-          👥 Реферальная программа
+          <span>👥</span> Реферальная программа
         </button>
-
         <button class="btn btn-secondary" onclick="showPage('tasks-page')">
-          🎯 Задания
+          <span>🎯</span> Задания
         </button>
       </div>
     </div>
 
-    <!-- Страница вывода -->
+    <!-- Withdraw Page -->
     <div id="withdraw-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="19" y1="12" x2="5" y2="12"></line>
-          <polyline points="12 19 5 12 12 5"></polyline>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
         </svg>
         Назад
       </button>
       
       <div class="card">
-        <h2 style="margin-top: 0;">💳 Вывод средств</h2>
+        <h2>💳 Вывод средств</h2>
         
-        <input type="text" id="wallet" placeholder="PAYEER кошелек (P1234567)">
+        <input type="text" id="wallet" placeholder="PAYEER кошелек (P1234567)" pattern="P\d{7,}">
         <input type="number" id="amount" placeholder="Сумма ($1+)" min="1" step="0.01">
         
-        <div style="margin: 20px 0; padding: 15px; background-color: var(--bg-color); border-radius: 12px; border: 1px solid var(--primary-dark);">
+        <div class="balance-info">
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
             <span>Минимальная сумма:</span>
             <span>$1.00</span>
@@ -458,18 +438,17 @@
       </div>
     </div>
 
-    <!-- Реферальная страница -->
+    <!-- Referral Page -->
     <div id="referral-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="19" y1="12" x2="5" y2="12"></line>
-          <polyline points="12 19 5 12 12 5"></polyline>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
         </svg>
         Назад
       </button>
       
       <div class="card">
-        <h2 style="margin-top: 0;">👥 Реферальная программа</h2>
+        <h2>👥 Реферальная программа</h2>
         
         <div class="referral-stats">
           <div class="stat-card">
@@ -482,82 +461,103 @@
           </div>
         </div>
 
-        <p style="text-align: center; margin: 20px 0;">За каждого приглашенного друга вы получаете <strong style="color: var(--accent-color);">15%</strong> от его выводов!</p>
+        <p style="text-align: center; margin: 20px 0;">
+          За каждого приглашенного друга вы получаете 
+          <strong style="color: var(--accent-color);">15%</strong> от его доходов!
+        </p>
 
-        <div class="referral-link" id="referral-link"></div>
-        <button class="btn" onclick="copyReferralLink()">Копировать ссылку</button>
+        <div style="text-align: center; margin: 20px 0;">
+          <div style="font-size: 14px; color: var(--secondary-text);">Ваш реферальный код:</div>
+          <div style="font-size: 18px; font-weight: bold; color: var(--accent-color); margin: 5px 0;" id="referral-code-display"></div>
+        </div>
+
+        <div class="referral-link-container">
+          <div id="referral-link"></div>
+        </div>
+        <button class="btn" onclick="copyReferralLink()">
+          <span>📋</span> Копировать ссылку
+        </button>
       </div>
     </div>
 
-    <!-- Страница заданий -->
+    <!-- Tasks Page -->
     <div id="tasks-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="19" y1="12" x2="5" y2="12"></line>
-          <polyline points="12 19 5 12 12 5"></polyline>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
         </svg>
         Назад
       </button>
       
       <div class="card">
-        <h2 style="margin-top: 0;">🎯 Доступные задания</h2>
-        <div id="tasks-list"></div>
+        <h2>🎯 Доступные задания</h2>
+        <div id="tasks-list">
+          <p style="text-align: center; color: var(--secondary-text);">Загрузка заданий...</p>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Скрытая кнопка админ-панели (невидимая) -->
-  <button id="secret-admin-btn" title="Админ-панель"></button>
-
-  <!-- Админ-панель -->
+  <!-- Admin Login -->
   <div id="admin-login" class="hidden">
-    <div class="card" style="max-width:400px; width:100%;">
-      <h2 style="margin-top:0; text-align:center;">Админ-доступ</h2>
+    <div class="card" style="max-width: 400px; margin: 100px auto;">
+      <h2 style="text-align: center; margin-bottom: 20px;">Админ-панель</h2>
       <input type="password" id="admin-password" placeholder="Введите пароль">
-      <button class="btn" onclick="checkAdminPassword()" style="width:100%;">Войти</button>
-      <button class="btn btn-secondary" onclick="hideAdminLogin()" style="width:100%; margin-top:10px;">Отмена</button>
+      <button class="btn" onclick="checkAdminPassword()">Войти</button>
+      <button class="btn btn-secondary" onclick="hideAdminLogin()" style="margin-top: 10px;">Отмена</button>
     </div>
   </div>
 
+  <!-- Admin Panel -->
   <div id="admin-panel" class="hidden">
-    <div class="card">
-      <h2 style="margin-top:0; display:flex; justify-content:space-between; align-items:center;">
-        <span>Админ-панель</span>
-        <button onclick="hideAdminPanel()" style="background:none; border:none; font-size:20px; cursor:pointer; color: var(--text-color);">✕</button>
-      </h2>
-
-      <h3>Заявки на вывод</h3>
-      <div class="admin-actions" style="margin-bottom: 15px;">
-        <button class="btn" onclick="loadWithdrawals('pending')">Ожидающие</button>
-        <button class="btn btn-secondary" onclick="loadWithdrawals('completed')">Завершенные</button>
-        <button class="btn btn-secondary" onclick="loadWithdrawals('rejected')">Отклоненные</button>
+    <div class="container">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1>Админ-панель</h1>
+        <button onclick="hideAdminPanel()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-color);">✕</button>
       </div>
-      <div id="withdrawals-list" style="max-height:40vh; overflow-y:auto; margin-bottom: 20px;"></div>
 
-      <h3>Управление заданиями</h3>
-      <div id="admin-tasks">
-        <input type="text" id="new-task-title" placeholder="Название задания">
-        <input type="number" id="new-task-reward" placeholder="Награда ($)" step="0.01">
-        <textarea id="new-task-desc" placeholder="Описание задания" rows="3"></textarea>
-        <input type="text" id="new-task-url" placeholder="Ссылка (https://...)">
-        <input type="number" id="new-task-cooldown" placeholder="Таймер (секунды)" value="10">
-        <button class="btn" onclick="addTask()">Добавить задание</button>
+      <div class="admin-section">
+        <h2>Заявки на вывод</h2>
+        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+          <button class="btn" onclick="loadWithdrawals('pending')">Ожидающие</button>
+          <button class="btn btn-secondary" onclick="loadWithdrawals('completed')">Завершенные</button>
+          <button class="btn btn-secondary" onclick="loadWithdrawals('rejected')">Отклоненные</button>
+        </div>
+        <div id="withdrawals-list" style="max-height: 50vh; overflow-y: auto;"></div>
+      </div>
 
-        <div id="current-tasks" style="margin-top: 20px;"></div>
+      <div class="admin-section">
+        <h2>Управление заданиями</h2>
+        <div class="card">
+          <h3>Добавить новое задание</h3>
+          <input type="text" id="new-task-title" placeholder="Название задания">
+          <input type="number" id="new-task-reward" placeholder="Награда ($)" step="0.01" min="0.01">
+          <textarea id="new-task-desc" placeholder="Описание задания" rows="3"></textarea>
+          <input type="text" id="new-task-url" placeholder="Ссылка (https://...)">
+          <input type="number" id="new-task-cooldown" placeholder="Таймер (секунды)" value="10" min="5">
+          <button class="btn" onclick="addTask()">Добавить задание</button>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+          <h3>Текущие задания</h3>
+          <div id="current-tasks"></div>
+        </div>
       </div>
     </div>
   </div>
+
+  <!-- Hidden Admin Button -->
+  <button id="secret-admin-btn" title="Админ-панель"></button>
 
 <script>
 // Конфигурация
 const CONFIG = {
+  apiUrl: "https://carfix77-rewarded-37.deno.dev",
   rewardPerAd: 0.0003,
   dailyLimit: 30,
   minWithdraw: 1.00,
   referralPercent: 0.15,
-  adminPassword: "8223Nn8223",
-  adCooldown: 10,
-  apiUrl: "https://carfix77-rewarded-22.deno.dev" // Ваш сервер Deno Deploy
+  adminPassword: "AdGramAdmin777"
 };
 
 // Глобальное состояние
@@ -566,11 +566,9 @@ const state = {
   balance: 0,
   adViews: 0,
   isAdBlocked: false,
-  lastAdTime: null,
-  isAdmin: false,
   referrals: 0,
   referralEarnings: 0,
-  referrer: null,
+  referralCode: "",
   completedTasks: [],
   adminToken: null,
   tasks: []
@@ -578,14 +576,47 @@ const state = {
 
 // Инициализация пользователя
 async function initUser() {
+  // Проверка Telegram WebApp
   if (window.Telegram && Telegram.WebApp.initDataUnsafe?.user?.id) {
     state.userId = 'tg_' + Telegram.WebApp.initDataUnsafe.user.id;
+    localStorage.setItem('userId', state.userId);
   } else {
-    state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    // Проверка существующего ID
+    state.userId = localStorage.getItem('userId');
+    if (!state.userId) {
+      // Регистрация нового пользователя
+      const refCode = new URLSearchParams(window.location.search).get('ref');
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/api/user/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ referrerCode: refCode })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          state.userId = data.userId;
+          state.referralCode = data.referralCode;
+          localStorage.setItem('userId', state.userId);
+        } else {
+          throw new Error("Ошибка регистрации");
+        }
+      } catch (error) {
+        console.error("Ошибка регистрации:", error);
+        // Fallback - генерация ID локально
+        state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+        state.referralCode = generateReferralCode(state.userId);
+        localStorage.setItem('userId', state.userId);
+      }
+    }
   }
-
+  
   await loadUserData();
-  checkReferral();
+}
+
+// Генерация реферального кода
+function generateReferralCode(userId) {
+  return userId.slice(0, 6) + Math.random().toString(36).substr(2, 4).toUpperCase();
 }
 
 // Загрузка данных пользователя
@@ -594,27 +625,25 @@ async function loadUserData() {
     const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}`);
     if (response.ok) {
       const userData = await response.json();
-      Object.assign(state, userData);
+      state.balance = userData.balance || 0;
+      state.adViews = userData.adViews || 0;
+      state.isAdBlocked = userData.isAdBlocked || false;
+      state.referrals = userData.referrals || 0;
+      state.referralEarnings = userData.ref_earnings || 0;
+      state.referralCode = userData.referralCode || generateReferralCode(state.userId);
+      state.completedTasks = userData.completedTasks || [];
+      
       updateUI();
     } else {
-      console.error("Ошибка загрузки данных пользователя");
+      throw new Error("Ошибка загрузки данных");
     }
   } catch (error) {
-    console.error("Ошибка сети:", error);
+    console.error("Ошибка загрузки данных:", error);
+    showError("Ошибка загрузки данных");
   }
 }
 
-// Проверка реферальной ссылки
-function checkReferral() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const ref = urlParams.get('ref');
-  if (ref && !state.referrer && ref !== state.userId) {
-    state.referrer = ref;
-    saveUserData();
-  }
-}
-
-// Просмотр рекламы
+// Показ рекламы
 async function startAd() {
   if (state.isAdBlocked) {
     alert("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
@@ -623,145 +652,73 @@ async function startAd() {
 
   const btn = document.getElementById('watch-ad-btn');
   btn.disabled = true;
-  btn.textContent = "⏳ Идет показ рекламы...";
+  btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
 
   try {
+    // Интеграция с рекламным SDK
+    if (typeof window.showAd === 'function') {
+      await window.showAd();
+    } else {
+      // Тестовый режим (2 секунды ожидания)
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    // Отправка данных на сервер
     const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}/watch-ad`, {
-      method: 'POST'
-    });
-
-    if (response.ok) {
-      const userData = await response.json();
-      Object.assign(state, userData);
-      updateUI();
-      alert(`+$${CONFIG.rewardPerAd.toFixed(3)} за просмотр!`);
-    } else {
-      const error = await response.json();
-      alert(error.error || "Ошибка при просмотре рекламы");
-    }
-  } catch (error) {
-    console.error("Ошибка сети:", error);
-    alert("Ошибка соединения");
-  } finally {
-    btn.textContent = "🎥 Смотреть рекламу (+$0.0003)";
-    btn.disabled = state.isAdBlocked;
-  }
-}
-
-// Загрузка заданий
-async function loadTasks() {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/api/tasks`);
-    if (response.ok) {
-      state.tasks = await response.json();
-      renderTasks();
-    }
-  } catch (error) {
-    console.error("Ошибка загрузки заданий:", error);
-  }
-}
-
-// Отображение заданий
-function renderTasks() {
-  const container = document.getElementById('tasks-list');
-  container.innerHTML = '';
-
-  if (state.tasks.length === 0) {
-    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет доступных заданий</p>';
-    return;
-  }
-
-  state.tasks.forEach(task => {
-    const isCompleted = state.completedTasks.includes(task.id);
-    const taskEl = document.createElement('div');
-    taskEl.className = 'task';
-    taskEl.innerHTML = `
-      <h3>${task.title} ($${task.reward.toFixed(2)})</h3>
-      <p style="white-space: pre-line;">${task.description}</p>
-      <button 
-        onclick="startTask('${task.id}')" 
-        ${isCompleted ? 'disabled' : ''}
-        class="btn ${isCompleted ? 'btn-disabled' : ''}"
-      >
-        ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
-      </button>
-    `;
-    container.appendChild(taskEl);
-  });
-}
-
-// Начало выполнения задания
-async function startTask(taskId) {
-  const task = state.tasks.find(t => t.id === taskId);
-  if (!task) return;
-
-  if (state.completedTasks.includes(taskId)) {
-    alert("Вы уже выполнили это задание!");
-    return;
-  }
-
-  window.open(task.url, '_blank');
-  alert(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
-  
-  // Проверяем выполнение задания через заданное время
-  setTimeout(async () => {
-    await completeTask(taskId);
-  }, task.cooldown * 1000);
-}
-
-// Завершение задания
-async function completeTask(taskId) {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}/complete-task`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ taskId })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        ref: new URLSearchParams(window.location.search).get('ref') 
+      })
     });
 
     if (response.ok) {
-      const userData = await response.json();
-      Object.assign(state, userData);
+      const result = await response.json();
+      state.balance = result.balance || state.balance;
+      state.adViews = result.adViews || state.adViews + 1;
+      state.isAdBlocked = result.isAdBlocked || false;
+      state.referrals = result.referrals || state.referrals;
+      state.referralEarnings = result.ref_earnings || state.referralEarnings;
+      
       updateUI();
-      renderTasks();
-      alert("Задание выполнено!");
+      showNotification(`+$${CONFIG.rewardPerAd.toFixed(3)} за просмотр!`);
     } else {
       const error = await response.json();
-      alert(error.error || "Ошибка при выполнении задания");
+      throw new Error(error.error || "Ошибка сервера");
     }
   } catch (error) {
-    console.error("Ошибка сети:", error);
-    alert("Ошибка соединения");
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка при просмотре рекламы");
+  } finally {
+    btn.disabled = state.isAdBlocked;
+    btn.innerHTML = '<span>🎥</span> Смотреть рекламу (+$0.0003)';
   }
 }
 
-// Создание заявки на вывод
+// Вывод средств
 async function submitWithdrawal() {
   const wallet = document.getElementById('wallet').value.trim();
   const amount = parseFloat(document.getElementById('amount').value);
 
   if (!/^P\d{7,}$/.test(wallet)) {
-    alert("Кошелек PAYEER должен начинаться с P и содержать минимум 8 цифр");
+    showError("Неверный формат PAYEER кошелька (должен начинаться с P и содержать минимум 7 цифр)");
     return;
   }
 
   if (isNaN(amount) || amount < CONFIG.minWithdraw) {
-    alert(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
+    showError(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
     return;
   }
 
   if (amount > state.balance) {
-    alert(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
+    showError(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
     return;
   }
 
   try {
     const response = await fetch(`${CONFIG.apiUrl}/api/withdrawals`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId: state.userId,
         wallet: wallet,
@@ -770,39 +727,140 @@ async function submitWithdrawal() {
     });
 
     if (response.ok) {
-      const withdrawal = await response.json();
+      const result = await response.json();
       state.balance -= amount;
-      
-      document.getElementById('wallet').value = '';
-      document.getElementById('amount').value = '';
-      
-      alert(`Заявка #${withdrawal.id} на $${amount.toFixed(2)} создана!`);
       updateUI();
       showPage('main-page');
+      showNotification(`Заявка #${result.id} на $${amount.toFixed(2)} создана!`);
+      
+      // Очистка формы
+      document.getElementById('wallet').value = '';
+      document.getElementById('amount').value = '';
     } else {
       const error = await response.json();
-      alert(error.error || "Ошибка при создании заявки");
+      throw new Error(error.error || "Ошибка сервера");
     }
   } catch (error) {
-    console.error("Ошибка сети:", error);
-    alert("Ошибка соединения");
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка при создании заявки");
   }
 }
 
-// Админ-функции
-async function checkAdminPassword() {
-  const password = document.getElementById('admin-password').value;
-  if (password !== CONFIG.adminPassword) {
-    alert("Неверный пароль!");
+// Реферальная система
+function copyReferralLink() {
+  const link = document.getElementById('referral-link').textContent;
+  navigator.clipboard.writeText(link).then(() => {
+    showNotification("Ссылка скопирована в буфер обмена!");
+  }).catch(err => {
+    console.error("Ошибка копирования:", err);
+    showError("Не удалось скопировать ссылку");
+  });
+}
+
+// Задания
+async function loadTasks() {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/tasks`);
+    if (response.ok) {
+      state.tasks = await response.json();
+      renderTasks();
+    } else {
+      throw new Error("Ошибка загрузки заданий");
+    }
+  } catch (error) {
+    console.error("Ошибка:", error);
+    document.getElementById('tasks-list').innerHTML = `
+      <p style="text-align: center; color: var(--secondary-text);">
+        Ошибка загрузки заданий. Попробуйте позже.
+      </p>
+    `;
+  }
+}
+
+function renderTasks() {
+  const container = document.getElementById('tasks-list');
+  
+  if (!state.tasks || state.tasks.length === 0) {
+    container.innerHTML = `
+      <p style="text-align: center; color: var(--secondary-text);">
+        Нет доступных заданий
+      </p>
+    `;
     return;
   }
 
+  container.innerHTML = '';
+  
+  state.tasks.forEach(task => {
+    const isCompleted = state.completedTasks.includes(task.id);
+    const taskEl = document.createElement('div');
+    taskEl.className = 'task-item';
+    taskEl.innerHTML = `
+      <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(2)})</span></h3>
+      <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
+      <button class="btn ${isCompleted ? 'btn-disabled' : ''}" 
+        onclick="startTask('${task.id}')" 
+        ${isCompleted ? 'disabled' : ''}>
+        ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
+      </button>
+    `;
+    container.appendChild(taskEl);
+  });
+}
+
+async function startTask(taskId) {
+  const task = state.tasks.find(t => t.id === taskId);
+  if (!task) return;
+
+  if (state.completedTasks.includes(taskId)) {
+    showNotification("Вы уже выполнили это задание!");
+    return;
+  }
+
+  // Открываем задание в новой вкладке
+  window.open(task.url, '_blank');
+  
+  showNotification(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
+  
+  // Проверяем выполнение через заданное время
+  setTimeout(async () => {
+    await completeTask(taskId);
+  }, task.cooldown * 1000);
+}
+
+async function completeTask(taskId) {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}/complete-task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId })
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      state.balance = result.balance;
+      state.completedTasks = result.completedTasks;
+      updateUI();
+      renderTasks();
+      showNotification("Задание выполнено!");
+    } else {
+      const error = await response.json();
+      throw new Error(error.error || "Ошибка сервера");
+    }
+  } catch (error) {
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка выполнения задания");
+  }
+}
+
+// Админ-панель
+async function checkAdminPassword() {
+  const password = document.getElementById('admin-password').value;
+  
   try {
     const response = await fetch(`${CONFIG.apiUrl}/api/admin/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password })
     });
 
@@ -814,11 +872,11 @@ async function checkAdminPassword() {
       loadWithdrawals();
       loadAdminTasks();
     } else {
-      alert("Ошибка авторизации");
+      throw new Error("Неверный пароль");
     }
   } catch (error) {
-    console.error("Ошибка сети:", error);
-    alert("Ошибка соединения");
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка авторизации");
   }
 }
 
@@ -833,58 +891,74 @@ async function loadWithdrawals(filter = 'pending') {
     if (response.ok) {
       const withdrawals = await response.json();
       renderWithdrawals(withdrawals, filter);
+    } else {
+      throw new Error("Ошибка загрузки заявок");
     }
   } catch (error) {
-    console.error("Ошибка загрузки заявок:", error);
+    console.error("Ошибка:", error);
+    document.getElementById('withdrawals-list').innerHTML = `
+      <p style="text-align: center; color: var(--secondary-text);">
+        Ошибка загрузки заявок
+      </p>
+    `;
   }
 }
 
 function renderWithdrawals(withdrawals, filter) {
   const container = document.getElementById('withdrawals-list');
-  container.innerHTML = '';
-
-  if (withdrawals.length === 0) {
-    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет заявок</p>';
+  
+  if (!withdrawals || withdrawals.length === 0) {
+    container.innerHTML = `
+      <p style="text-align: center; color: var(--secondary-text);">
+        Нет заявок со статусом "${getStatusText(filter)}"
+      </p>
+    `;
     return;
   }
 
+  container.innerHTML = '';
+  
   withdrawals.forEach(withdrawal => {
     const item = document.createElement('div');
     item.className = 'withdrawal-item';
-
     item.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <strong>#${withdrawal.id}</strong>
         <div>
           <span>$${withdrawal.amount.toFixed(2)}</span>
-          <span class="status-badge status-${withdrawal.status}">${getStatusText(withdrawal.status)}</span>
+          <span class="status-badge status-${withdrawal.status}">
+            ${getStatusText(withdrawal.status)}
+          </span>
         </div>
       </div>
       <div style="margin: 8px 0; font-size: 14px;">
         <div>Кошелек: ${withdrawal.wallet}</div>
         <div>Пользователь: ${withdrawal.userId}</div>
-        <div>Баланс: $${withdrawal.user?.balance?.toFixed(2) || '0.00'}</div>
+        <div>Просмотров: ${withdrawal.adViews}</div>
         <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
       </div>
       ${withdrawal.status === 'pending' ? `
       <div class="admin-actions">
-        <button class="approve-btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">Оплатить</button>
-        <button class="reject-btn" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">Отклонить</button>
+        <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
+          Одобрить
+        </button>
+        <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
+          Отклонить
+        </button>
       </div>
       ` : ''}
     `;
-
     container.appendChild(item);
   });
 }
 
 function getStatusText(status) {
-  const statusMap = {
+  const statuses = {
     'pending': 'Ожидает',
-    'completed': 'Оплачено',
+    'completed': 'Выполнено',
     'rejected': 'Отклонено'
   };
-  return statusMap[status] || status;
+  return statuses[status] || status;
 }
 
 async function processWithdrawal(id, action) {
@@ -899,15 +973,14 @@ async function processWithdrawal(id, action) {
     });
 
     if (response.ok) {
-      alert(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}!`);
       loadWithdrawals('pending');
+      showNotification(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}`);
     } else {
-      const error = await response.json();
-      alert(error.error || "Ошибка при обработке заявки");
+      throw new Error("Ошибка обработки заявки");
     }
   } catch (error) {
-    console.error("Ошибка сети:", error);
-    alert("Ошибка соединения");
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка обработки заявки");
   }
 }
 
@@ -922,33 +995,50 @@ async function loadAdminTasks() {
     if (response.ok) {
       state.tasks = await response.json();
       renderAdminTasks();
+    } else {
+      throw new Error("Ошибка загрузки заданий");
     }
   } catch (error) {
-    console.error("Ошибка загрузки заданий:", error);
+    console.error("Ошибка:", error);
+    document.getElementById('current-tasks').innerHTML = `
+      <p style="text-align: center; color: var(--secondary-text);">
+        Ошибка загрузки заданий
+      </p>
+    `;
   }
 }
 
 function renderAdminTasks() {
   const container = document.getElementById('current-tasks');
-  container.innerHTML = '';
-
-  if (state.tasks.length === 0) {
-    container.innerHTML = '<p style="text-align:center; color:var(--secondary-text);">Нет созданных заданий</p>';
+  
+  if (!state.tasks || state.tasks.length === 0) {
+    container.innerHTML = `
+      <p style="text-align: center; color: var(--secondary-text);">
+        Нет созданных заданий
+      </p>
+    `;
     return;
   }
 
-  state.tasks.forEach((task, index) => {
+  container.innerHTML = '';
+  
+  state.tasks.forEach(task => {
     const taskEl = document.createElement('div');
-    taskEl.className = 'admin-task';
+    taskEl.className = 'admin-task-item';
     taskEl.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <strong>${task.title}</strong>
-        <button onclick="deleteTask(${index})" class="reject-btn">Удалить</button>
+        <button class="btn btn-danger" onclick="deleteTask('${task.id}')">
+          Удалить
+        </button>
       </div>
       <p style="white-space: pre-line; margin: 8px 0;">${task.description}</p>
       <div style="display: flex; justify-content: space-between;">
         <span>Награда: $${task.reward.toFixed(2)}</span>
         <span>Таймер: ${task.cooldown} сек</span>
+      </div>
+      <div style="margin-top: 8px;">
+        <a href="${task.url}" target="_blank" style="color: var(--accent-color);">${task.url}</a>
       </div>
     `;
     container.appendChild(taskEl);
@@ -956,16 +1046,19 @@ function renderAdminTasks() {
 }
 
 async function addTask() {
-  const newTask = {
-    title: document.getElementById('new-task-title').value,
-    reward: parseFloat(document.getElementById('new-task-reward').value),
-    description: document.getElementById('new-task-desc').value,
-    url: document.getElementById('new-task-url').value,
-    cooldown: parseInt(document.getElementById('new-task-cooldown').value) || 10
-  };
+  const title = document.getElementById('new-task-title').value.trim();
+  const reward = parseFloat(document.getElementById('new-task-reward').value);
+  const description = document.getElementById('new-task-desc').value.trim();
+  const url = document.getElementById('new-task-url').value.trim();
+  const cooldown = parseInt(document.getElementById('new-task-cooldown').value) || 10;
 
-  if (!newTask.title || !newTask.reward || !newTask.description || !newTask.url) {
-    alert("Заполните все поля!");
+  if (!title || !reward || !description || !url) {
+    showError("Заполните все поля!");
+    return;
+  }
+
+  if (!url.startsWith('http')) {
+    showError("Ссылка должна начинаться с http:// или https://");
     return;
   }
 
@@ -976,34 +1069,39 @@ async function addTask() {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${state.adminToken}`
       },
-      body: JSON.stringify(newTask)
+      body: JSON.stringify({
+        title,
+        reward,
+        description,
+        url,
+        cooldown
+      })
     });
 
     if (response.ok) {
       const task = await response.json();
       state.tasks.push(task);
+      renderAdminTasks();
       
-      // Очищаем поля
+      // Очищаем форму
       document.getElementById('new-task-title').value = '';
       document.getElementById('new-task-reward').value = '';
       document.getElementById('new-task-desc').value = '';
       document.getElementById('new-task-url').value = '';
       document.getElementById('new-task-cooldown').value = '10';
       
-      renderAdminTasks();
-      alert("Задание добавлено!");
+      showNotification("Задание добавлено!");
     } else {
-      const error = await response.json();
-      alert(error.error || "Ошибка при добавлении задания");
+      throw new Error("Ошибка добавления задания");
     }
   } catch (error) {
-    console.error("Ошибка сети:", error);
-    alert("Ошибка соединения");
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка добавления задания");
   }
 }
 
-async function deleteTask(index) {
-  const taskId = state.tasks[index].id;
+async function deleteTask(taskId) {
+  if (!confirm("Удалить это задание?")) return;
   
   try {
     const response = await fetch(`${CONFIG.apiUrl}/api/admin/tasks/${taskId}`, {
@@ -1014,31 +1112,34 @@ async function deleteTask(index) {
     });
 
     if (response.ok) {
-      state.tasks.splice(index, 1);
+      state.tasks = state.tasks.filter(t => t.id !== taskId);
       renderAdminTasks();
-      alert("Задание удалено!");
+      showNotification("Задание удалено!");
     } else {
-      const error = await response.json();
-      alert(error.error || "Ошибка при удалении задания");
+      throw new Error("Ошибка удаления задания");
     }
   } catch (error) {
-    console.error("Ошибка сети:", error);
-    alert("Ошибка соединения");
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка удаления задания");
   }
 }
 
 // Общие функции
 function updateUI() {
-  document.getElementById('balance').textContent = '$' + state.balance.toFixed(3);
-  document.getElementById('available-balance').textContent = '$' + state.balance.toFixed(3);
+  // Баланс и просмотры
+  document.getElementById('balance').textContent = `$${state.balance.toFixed(3)}`;
+  document.getElementById('available-balance').textContent = `$${state.balance.toFixed(3)}`;
   document.getElementById('ad-counter').textContent = state.adViews;
   document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
+  
+  // Реферальная система
   document.getElementById('referral-count').textContent = state.referrals;
   document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
-  document.getElementById('referral-link').textContent = `${window.location.href.split('?')[0]}?ref=${state.userId}`;
-
-  const btn = document.getElementById('watch-ad-btn');
-  btn.disabled = state.isAdBlocked;
+  document.getElementById('referral-code-display').textContent = state.referralCode;
+  document.getElementById('referral-link').textContent = `${window.location.origin}?ref=${state.referralCode}`;
+  
+  // Кнопка просмотра рекламы
+  document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
 }
 
 function showPage(pageId) {
@@ -1052,11 +1153,12 @@ function showPage(pageId) {
   }
 }
 
-function copyReferralLink() {
-  const link = document.getElementById('referral-link').textContent;
-  navigator.clipboard.writeText(link).then(() => {
-    alert("Реферальная ссылка скопирована в буфер обмена!");
-  });
+function showNotification(message) {
+  alert(message); // Временное решение, можно заменить на красивый toast
+}
+
+function showError(message) {
+  alert(message); // Временное решение
 }
 
 function showAdminLogin() {
@@ -1078,24 +1180,43 @@ function hideAdminPanel() {
 
 // Инициализация приложения
 async function init() {
+  // Проверка соединения с сервером
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/health`);
+    if (!response.ok) throw new Error("Сервер не отвечает");
+  } catch (error) {
+    console.error("Ошибка подключения:", error);
+    document.getElementById('splash-screen').innerHTML = `
+      <div style="text-align: center; color: white;">
+        <div class="splash-logo">⚠️</div>
+        <div class="splash-text">Ошибка подключения</div>
+        <p style="margin-top: 20px;">Сервер не отвечает. Попробуйте позже.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Заставка
   setTimeout(() => {
     document.getElementById('splash-screen').style.opacity = '0';
-    setTimeout(async () => {
+    setTimeout(() => {
       document.getElementById('splash-screen').style.display = 'none';
       
       // Инициализация пользователя
-      await initUser();
+      initUser();
       
-      // Назначаем обработчики
+      // Назначение обработчиков
+      document.getElementById('watch-ad-btn').addEventListener('click', startAd);
       document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
       
+      // Горячая клавиша для админки
       document.addEventListener('keydown', (e) => {
         if (e.ctrlKey && e.altKey && e.key === 'a') {
           showAdminLogin();
         }
       });
     }, 500);
-  }, 2000);
+  }, 1500);
 }
 
 // Запуск приложения
