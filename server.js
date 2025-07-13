@@ -8,7 +8,8 @@ const CONFIG = {
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  SECRET_KEY: "Jora1514"
+  SECRET_KEY: "Jora1514",
+  REWARD_SECRET: "AdRewardsSecure123" // Секрет для верификации запросов
 };
 
 const PORT = 8000;
@@ -26,6 +27,24 @@ async function generateToken(userId) {
     { userId, exp: Date.now() + 86400000 },
     CONFIG.SECRET_KEY
   );
+}
+
+// Проверка авторизации
+async function authMiddleware(ctx, next) {
+  const token = ctx.request.headers.get("Authorization")?.split(" ")[1];
+  if (!token) {
+    ctx.response.status = 401;
+    ctx.response.body = { error: "Authorization required" };
+    return;
+  }
+
+  try {
+    await verify(token, CONFIG.SECRET_KEY);
+    await next();
+  } catch {
+    ctx.response.status = 403;
+    ctx.response.body = { error: "Invalid token" };
+  }
 }
 
 // Регистрация пользователя
@@ -61,12 +80,19 @@ router.post("/api/register", async (ctx) => {
   }
 });
 
-// Просмотр рекламы
-router.post("/api/watch-ad", async (ctx) => {
+// Эндпоинт для рекламных начислений
+router.get("/reward", async (ctx) => {
+  const userId = ctx.request.url.searchParams.get("userid");
+  const secret = ctx.request.url.searchParams.get("secret");
+
+  if (!userId || secret !== CONFIG.REWARD_SECRET) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid parameters" };
+    return;
+  }
+
   try {
-    const { userId } = await ctx.request.body().value;
     const today = new Date().toISOString().split("T")[0];
-    
     const [user, dailyViews] = await Promise.all([
       kv.get(["users", userId]),
       kv.get(["stats", userId, today])
@@ -80,36 +106,37 @@ router.post("/api/watch-ad", async (ctx) => {
 
     const viewsToday = dailyViews.value?.views || 0;
     if (viewsToday >= CONFIG.DAILY_LIMIT) {
-      ctx.response.status = 400;
+      ctx.response.status = 429;
       ctx.response.body = { error: "Daily limit reached" };
       return;
     }
 
     const reward = CONFIG.REWARD_PER_AD;
-    let refRewards = 0;
-
-    for await (const entry of kv.list({ prefix: ["refs", userId] })) {
-      const refUserId = entry.key[2];
-      const refReward = reward * CONFIG.REFERRAL_PERCENT;
-      await kv.atomic()
-        .sum(["users", refUserId, "balance"], refReward)
-        .sum(["users", refUserId, "refEarnings"], refReward)
-        .commit();
-      refRewards++;
-    }
-
     const newBalance = (user.value.balance || 0) + reward;
+
     await kv.atomic()
       .set(["users", userId, "balance"], newBalance)
       .set(["stats", userId, today], { views: viewsToday + 1 })
       .commit();
 
-    ctx.response.body = { 
+    ctx.response.body = {
       success: true,
+      userId,
       reward,
-      refRewards,
       balance: newBalance
     };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Reward processing failed" };
+  }
+});
+
+// Просмотр рекламы (альтернативный вариант)
+router.post("/api/watch-ad", authMiddleware, async (ctx) => {
+  try {
+    const { userId } = await ctx.request.body().value;
+    const rewardResponse = await fetch(`http://localhost:${PORT}/reward?userid=${userId}&secret=${CONFIG.REWARD_SECRET}`);
+    ctx.response.body = await rewardResponse.json();
   } catch (error) {
     ctx.response.status = 500;
     ctx.response.body = { error: "Failed to process ad view" };
@@ -117,19 +144,13 @@ router.post("/api/watch-ad", async (ctx) => {
 });
 
 // Вывод средств
-router.post("/api/withdraw", async (ctx) => {
+router.post("/api/withdraw", authMiddleware, async (ctx) => {
   try {
     const { userId, wallet, amount } = await ctx.request.body().value;
     
     if (amount < CONFIG.MIN_WITHDRAW) {
       ctx.response.status = 400;
       ctx.response.body = { error: `Minimum withdrawal: $${CONFIG.MIN_WITHDRAW}` };
-      return;
-    }
-
-    if (!/^P\d{7,}$/.test(wallet)) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Invalid PAYEER wallet format" };
       return;
     }
 
@@ -168,7 +189,8 @@ router.get("/", (ctx) => {
     endpoints: {
       register: "/api/register",
       watchAd: "/api/watch-ad",
-      withdraw: "/api/withdraw"
+      withdraw: "/api/withdraw",
+      reward: "/reward?userid=[userId]&secret=[secret]"
     }
   };
 });
