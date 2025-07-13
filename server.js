@@ -1,7 +1,7 @@
 import { Application, Router } from "https://deno.land/x/oak/mod.ts";
 import { oakCors } from "https://deno.land/x/cors/mod.ts";
-import { create, verify } from "https://deno.land/x/djwt@v2.8/mod.ts";
 
+// Инициализация хранилища и приложения
 const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
@@ -13,66 +13,43 @@ const CONFIG = {
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "AdGramAdmin777",
-  SECRET_KEY: "Jora1514",
-  TASK_REWARDS: {
-    FOLLOW_TELEGRAM: 0.10,
-    JOIN_CHAT: 0.15,
-    WATCH_VIDEO: 0.05
-  }
+  SECRET_KEY: "Jora1514"
 };
 
 // Включение CORS
 app.use(oakCors({
   origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type"]
 }));
 
 // Middleware для логирования
 app.use(async (ctx, next) => {
+  console.log(`[${new Date().toISOString()}] ${ctx.request.method} ${ctx.request.url}`);
   await next();
-  const rt = ctx.response.headers.get("X-Response-Time");
-  console.log(`${ctx.request.method} ${ctx.request.url} - ${rt}`);
 });
 
-// Middleware для измерения времени
-app.use(async (ctx, next) => {
-  const start = Date.now();
-  await next();
-  const ms = Date.now() - start;
-  ctx.response.headers.set("X-Response-Time", `${ms}ms`);
+// Проверка работоспособности сервера
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    status: "OK",
+    app: "AdRewards+",
+    version: "1.0.0",
+    endpoints: {
+      register: "/api/register",
+      watchAd: "/api/watch-ad",
+      withdraw: "/api/withdraw",
+      tasks: "/api/tasks"
+    }
+  };
 });
-
-// Генерация реферального кода
-function generateRefCode() {
-  return Math.random().toString(36).substring(2, 10).toUpperCase();
-}
-
-// Middleware для проверки JWT администратора
-const adminAuth = async (ctx: any, next: any) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader) {
-    ctx.response.status = 401;
-    ctx.response.body = { error: "Требуется авторизация" };
-    return;
-  }
-
-  const token = authHeader.split(" ")[1];
-  try {
-    await verify(token, CONFIG.SECRET_KEY, "HS256");
-    await next();
-  } catch (err) {
-    ctx.response.status = 403;
-    ctx.response.body = { error: "Неверный или просроченный токен" };
-  }
-};
 
 // Регистрация пользователя
 router.post("/api/register", async (ctx) => {
   try {
     const { refCode } = await ctx.request.body().value;
-    const userId = "user_" + crypto.randomUUID();
-    const userRefCode = generateRefCode();
+    const userId = `user_${crypto.randomUUID()}`;
+    const userRefCode = Math.random().toString(36).substring(2, 10).toUpperCase();
 
     await kv.set(["users", userId], {
       balance: 0,
@@ -80,30 +57,27 @@ router.post("/api/register", async (ctx) => {
       refCode: userRefCode,
       refCount: 0,
       refEarnings: 0,
-      completedTasks: [],
       createdAt: new Date().toISOString()
     });
 
     if (refCode) {
       for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.refCode === refCode) {
-          await kv.set(["refs", refCode, userId], { 
-            date: new Date().toISOString() 
-          });
+          await kv.set(["refs", refCode, userId], { date: new Date().toISOString() });
           await kv.set(["users", entry.key[1], "refCount"], entry.value.refCount + 1);
           break;
         }
       }
     }
 
-    ctx.response.body = { 
+    ctx.response.body = {
       success: true,
-      userId, 
-      refCode: userRefCode 
+      userId,
+      refCode: userRefCode
     };
   } catch (error) {
     ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка регистрации" };
+    ctx.response.body = { error: "Registration failed" };
   }
 });
 
@@ -113,19 +87,21 @@ router.post("/api/watch-ad", async (ctx) => {
     const { userId } = await ctx.request.body().value;
     const today = new Date().toISOString().split("T")[0];
     
-    const user = await kv.get(["users", userId]);
+    const [user, dailyViews] = await Promise.all([
+      kv.get(["users", userId]),
+      kv.get(["stats", userId, today])
+    ]);
+
     if (!user.value) {
       ctx.response.status = 404;
-      ctx.response.body = { error: "Пользователь не найден" };
+      ctx.response.body = { error: "User not found" };
       return;
     }
 
-    const dailyViews = await kv.get(["stats", userId, today]);
     const viewsToday = dailyViews.value?.views || 0;
-
     if (viewsToday >= CONFIG.DAILY_LIMIT) {
       ctx.response.status = 400;
-      ctx.response.body = { error: "Достигнут дневной лимит просмотров" };
+      ctx.response.body = { error: "Daily limit reached" };
       return;
     }
 
@@ -143,23 +119,24 @@ router.post("/api/watch-ad", async (ctx) => {
       refRewards++;
     }
 
-    // Обновление статистики
+    // Обновление баланса и статистики
+    const newBalance = (user.value.balance || 0) + reward;
     await kv.atomic()
-      .sum(["users", userId, "balance"], reward)
+      .set(["users", userId, "balance"], newBalance)
       .set(["stats", userId, today], { views: viewsToday + 1 })
       .set(["users", userId, "adViews"], (user.value.adViews || 0) + 1)
       .commit();
 
-    ctx.response.body = { 
-      success: true, 
+    ctx.response.body = {
+      success: true,
       reward,
       refRewards,
-      viewsToday: viewsToday + 1,
-      balance: (user.value.balance || 0) + reward
+      balance: newBalance,
+      viewsToday: viewsToday + 1
     };
   } catch (error) {
     ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка при просмотре рекламы" };
+    ctx.response.body = { error: "Failed to process ad view" };
   }
 });
 
@@ -170,24 +147,26 @@ router.post("/api/withdraw", async (ctx) => {
     
     if (amount < CONFIG.MIN_WITHDRAW) {
       ctx.response.status = 400;
-      ctx.response.body = { error: `Минимальная сумма вывода: $${CONFIG.MIN_WITHDRAW}` };
+      ctx.response.body = { error: `Minimum withdrawal is $${CONFIG.MIN_WITHDRAW}` };
+      return;
+    }
+
+    if (!/^P\d{7,}$/.test(wallet)) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid PAYEER wallet format" };
       return;
     }
 
     const user = await kv.get(["users", userId]);
     if (!user.value || user.value.balance < amount) {
       ctx.response.status = 400;
-      ctx.response.body = { error: "Недостаточно средств" };
-      return;
-    }
-
-    if (!/^P\d{7,}$/.test(wallet)) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Неверный формат PAYEER кошелька" };
+      ctx.response.body = { error: "Insufficient balance" };
       return;
     }
 
     const withdrawId = crypto.randomUUID();
+    const newBalance = user.value.balance - amount;
+    
     await kv.atomic()
       .set(["withdrawals", withdrawId], {
         userId,
@@ -197,228 +176,59 @@ router.post("/api/withdraw", async (ctx) => {
         date: new Date().toISOString(),
         adViews: user.value.adViews || 0
       })
-      .sum(["users", userId, "balance"], -amount)
+      .set(["users", userId, "balance"], newBalance)
       .commit();
 
-    ctx.response.body = { 
+    ctx.response.body = {
       success: true,
       withdrawId,
-      balance: user.value.balance - amount
+      balance: newBalance
     };
   } catch (error) {
     ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка при создании заявки" };
+    ctx.response.body = { error: "Withdrawal failed" };
   }
 });
 
 // Получение заданий
-router.get("/api/tasks", async (ctx) => {
-  try {
-    const tasks = [
+router.get("/api/tasks", (ctx) => {
+  ctx.response.body = {
+    success: true,
+    tasks: [
       {
         id: "follow_telegram",
-        title: "Подпишитесь на наш Telegram",
-        description: "Подпишитесь на наш канал в Telegram и получите вознаграждение",
-        reward: CONFIG.TASK_REWARDS.FOLLOW_TELEGRAM,
+        title: "Подпишитесь на Telegram",
+        description: "Подпишитесь на наш канал в Telegram",
+        reward: 0.10,
         url: "https://t.me/your_channel",
         cooldown: 60
       },
       {
         id: "join_chat",
         title: "Вступите в чат",
-        description: "Присоединитесь к нашему чату в Telegram",
-        reward: CONFIG.TASK_REWARDS.JOIN_CHAT,
+        description: "Присоединитесь к нашему Telegram чату",
+        reward: 0.15,
         url: "https://t.me/your_chat",
         cooldown: 90
-      },
-      {
-        id: "watch_video",
-        title: "Посмотрите видео",
-        description: "Посмотрите наше видео до конца",
-        reward: CONFIG.TASK_REWARDS.WATCH_VIDEO,
-        url: "https://youtube.com/your_video",
-        cooldown: 120
       }
-    ];
-
-    ctx.response.body = tasks;
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка загрузки заданий" };
-  }
+    ]
+  };
 });
 
-// Завершение задания
-router.post("/api/complete-task", async (ctx) => {
+// Обработка ошибок
+app.use(async (ctx, next) => {
   try {
-    const { userId, taskId } = await ctx.request.body().value;
-    
-    const user = await kv.get(["users", userId]);
-    if (!user.value) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "Пользователь не найден" };
-      return;
-    }
-
-    if (user.value.completedTasks?.includes(taskId)) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Задание уже выполнено" };
-      return;
-    }
-
-    const task = [
-      {
-        id: "follow_telegram",
-        reward: CONFIG.TASK_REWARDS.FOLLOW_TELEGRAM
-      },
-      {
-        id: "join_chat",
-        reward: CONFIG.TASK_REWARDS.JOIN_CHAT
-      },
-      {
-        id: "watch_video",
-        reward: CONFIG.TASK_REWARDS.WATCH_VIDEO
-      }
-    ].find(t => t.id === taskId);
-
-    if (!task) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "Задание не найдено" };
-      return;
-    }
-
-    await kv.atomic()
-      .sum(["users", userId, "balance"], task.reward)
-      .set(["users", userId, "completedTasks"], [...(user.value.completedTasks || []), taskId])
-      .commit();
-
-    ctx.response.body = { 
-      success: true,
-      reward: task.reward,
-      balance: (user.value.balance || 0) + task.reward
-    };
-  } catch (error) {
+    await next();
+  } catch (err) {
     ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка выполнения задания" };
-  }
-});
-
-// Админ-авторизация
-router.post("/admin/login", async (ctx) => {
-  try {
-    const { password } = await ctx.request.body().value;
-    
-    if (password === CONFIG.ADMIN_PASSWORD) {
-      const token = await create(
-        { alg: "HS256", typ: "JWT" },
-        { 
-          admin: true, 
-          exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 // 24 часа
-        },
-        CONFIG.SECRET_KEY
-      );
-
-      ctx.response.body = { 
-        success: true,
-        token 
-      };
-    } else {
-      ctx.response.status = 401;
-      ctx.response.body = { error: "Неверный пароль" };
-    }
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка авторизации" };
-  }
-});
-
-// Получение заявок на вывод (админ)
-router.get("/admin/withdrawals", adminAuth, async (ctx) => {
-  try {
-    const { status } = ctx.request.url.searchParams;
-    const withdrawals = [];
-    
-    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-      if (!status || entry.value.status === status) {
-        withdrawals.push(entry.value);
-      }
-    }
-
-    ctx.response.body = {
-      success: true,
-      withdrawals
-    };
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка загрузки заявок" };
-  }
-});
-
-// Обновление статуса вывода (админ)
-router.put("/admin/withdrawals/:id", adminAuth, async (ctx) => {
-  try {
-    const { status } = await ctx.request.body().value;
-    const id = ctx.params.id;
-    
-    const withdraw = await kv.get(["withdrawals", id]);
-    if (!withdraw.value) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "Заявка не найдена" };
-      return;
-    }
-
-    await kv.set(["withdrawals", id], { 
-      ...withdraw.value, 
-      status 
-    });
-
-    ctx.response.body = { 
-      success: true,
-      withdrawal: {
-        ...withdraw.value,
-        status
-      }
-    };
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка обновления заявки" };
-  }
-});
-
-// Получение статистики (админ)
-router.get("/admin/stats", adminAuth, async (ctx) => {
-  try {
-    let totalUsers = 0;
-    let totalWithdraws = 0;
-    let totalEarned = 0;
-    
-    for await (const _ of kv.list({ prefix: ["users"] })) totalUsers++;
-    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-      totalWithdraws++;
-      if (entry.value.status === "completed") {
-        totalEarned += entry.value.amount;
-      }
-    }
-
-    ctx.response.body = {
-      success: true,
-      stats: {
-        totalUsers,
-        totalWithdraws,
-        totalEarned,
-        dailyLimit: CONFIG.DAILY_LIMIT
-      }
-    };
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Ошибка загрузки статистики" };
+    ctx.response.body = { error: "Internal server error" };
+    console.error(err);
   }
 });
 
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-// Запуск сервера
-const port = parseInt(Deno.env.get("PORT") || 8000;
-console.log(`Сервер AdRewards+ запущен на порту ${port}`);
+const port = parseInt(Deno.env.get("PORT") || 8000);
+console.log(`Server running on port ${port}`);
 await app.listen({ port });
