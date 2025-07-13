@@ -360,7 +360,6 @@
       margin-bottom: 30px;
     }
 
-    /* Connection error styles */
     .connection-error {
       position: fixed;
       top: 0;
@@ -389,25 +388,20 @@
   </style>
 </head>
 <body>
-  <!-- Splash Screen -->
   <div id="splash-screen">
     <div class="splash-logo">💰</div>
     <div class="splash-text">AdRewards+</div>
   </div>
 
-  <!-- Connection Error Screen -->
   <div id="connection-error" class="hidden">
     <h2>Ошибка подключения</h2>
     <p>Сервер не отвечает. Пожалуйста, проверьте ваше интернет-соединение и попробуйте снова.</p>
     <button class="btn" id="retry-btn">Попробовать снова</button>
   </div>
 
-  <!-- Notification -->
   <div id="copy-notification" class="copy-notification">Скопировано!</div>
 
-  <!-- Main App -->
   <div class="container" id="app-container">
-    <!-- Main Page -->
     <div id="main-page" class="page active">
       <div class="card">
         <div class="balance">
@@ -442,7 +436,6 @@
       </div>
     </div>
 
-    <!-- Withdraw Page -->
     <div id="withdraw-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -472,7 +465,6 @@
       </div>
     </div>
 
-    <!-- Referral Page -->
     <div id="referral-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -514,7 +506,6 @@
       </div>
     </div>
 
-    <!-- Tasks Page -->
     <div id="tasks-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -532,7 +523,6 @@
     </div>
   </div>
 
-  <!-- Admin Login -->
   <div id="admin-login" class="hidden">
     <div class="card" style="max-width: 400px; margin: 100px auto;">
       <h2 style="text-align: center; margin-bottom: 20px;">Админ-панель</h2>
@@ -542,7 +532,6 @@
     </div>
   </div>
 
-  <!-- Admin Panel -->
   <div id="admin-panel" class="hidden">
     <div class="container">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -580,22 +569,19 @@
     </div>
   </div>
 
-  <!-- Hidden Admin Button -->
   <button id="secret-admin-btn" title="Админ-панель"></button>
 
 <script>
-// Конфигурация
 const CONFIG = {
-  apiUrl: "http://localhost:8000", // Замените на ваш URL сервера
+  apiUrl: "https://carfix77-rewarded-43.deno.dev",
   rewardPerAd: 0.0003,
   dailyLimit: 30,
   minWithdraw: 1.00,
   referralPercent: 0.15,
   adminPassword: "AdGramAdmin777",
-  retryInterval: 5000 // 5 секунд между попытками переподключения
+  retryInterval: 5000
 };
 
-// Глобальное состояние
 const state = {
   userId: null,
   balance: 0,
@@ -611,7 +597,6 @@ const state = {
   maxRetries: 5
 };
 
-// Улучшенная функция для выполнения запросов
 async function makeRequest(endpoint, method = 'GET', body = null, auth = false) {
   const headers = {
     'Content-Type': 'application/json'
@@ -623,9 +608,12 @@ async function makeRequest(endpoint, method = 'GET', body = null, auth = false) 
   
   const options = {
     method,
-    headers,
-    body: body ? JSON.stringify(body) : null
+    headers
   };
+  
+  if (body) {
+    options.body = JSON.stringify(body);
+  }
   
   try {
     const response = await fetch(`${CONFIG.apiUrl}${endpoint}`, options);
@@ -642,11 +630,9 @@ async function makeRequest(endpoint, method = 'GET', body = null, auth = false) 
   }
 }
 
-// Проверка соединения с сервером
 async function checkConnection() {
   try {
-    const data = await makeRequest('/health');
-    console.log("Server connection OK:", data);
+    await makeRequest('/');
     return true;
   } catch (error) {
     console.error("Connection check failed:", error);
@@ -654,13 +640,11 @@ async function checkConnection() {
   }
 }
 
-// Показать/скрыть экран ошибки подключения
 function showConnectionError(show) {
   document.getElementById('connection-error').classList.toggle('hidden', !show);
   document.getElementById('app-container').style.display = show ? 'none' : 'block';
 }
 
-// Попытка переподключения
 async function tryReconnect() {
   const isConnected = await checkConnection();
   
@@ -683,53 +667,45 @@ async function tryReconnect() {
   }
 }
 
-// Инициализация пользователя
 async function initUser() {
-  // Проверка Telegram WebApp
-  if (window.Telegram && Telegram.WebApp.initDataUnsafe?.user?.id) {
-    state.userId = 'tg_' + Telegram.WebApp.initDataUnsafe.user.id;
-    localStorage.setItem('userId', state.userId);
-  } else {
-    // Проверка существующего ID
-    state.userId = localStorage.getItem('userId');
-    if (!state.userId) {
-      // Регистрация нового пользователя
-      const refCode = new URLSearchParams(window.location.search).get('ref');
-      try {
-        const data = await makeRequest('/api/user/register', 'POST', { referrerCode: refCode });
-        state.userId = data.userId;
-        state.referralCode = data.referralCode;
-        localStorage.setItem('userId', state.userId);
-      } catch (error) {
-        console.error("Ошибка регистрации:", error);
-        // Fallback - генерация ID локально
-        state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
-        state.referralCode = generateReferralCode(state.userId);
-        localStorage.setItem('userId', state.userId);
-      }
+  state.userId = localStorage.getItem('userId');
+  
+  if (!state.userId) {
+    const refCode = new URLSearchParams(window.location.search).get('ref');
+    try {
+      const data = await makeRequest('/api/register', 'POST', { refCode });
+      state.userId = data.userId;
+      state.referralCode = data.refCode;
+      localStorage.setItem('userId', state.userId);
+    } catch (error) {
+      console.error("Ошибка регистрации:", error);
+      state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+      state.referralCode = generateReferralCode();
+      localStorage.setItem('userId', state.userId);
     }
   }
   
   await loadUserData();
 }
 
-// Генерация реферального кода
-function generateReferralCode(userId) {
-  return userId.slice(0, 6) + Math.random().toString(36).substr(2, 4).toUpperCase();
+function generateReferralCode() {
+  return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
-// Загрузка данных пользователя
 async function loadUserData() {
   try {
-    const userData = await makeRequest(`/api/user/${state.userId}`);
+    const today = new Date().toISOString().split('T')[0];
+    const [userData, statsData] = await Promise.all([
+      makeRequest(`/api/user/${state.userId}`),
+      makeRequest(`/api/stats/${state.userId}/${today}`)
+    ]);
     
     state.balance = userData.balance || 0;
-    state.adViews = userData.adViews || 0;
-    state.isAdBlocked = userData.isAdBlocked || false;
-    state.referrals = userData.referrals || 0;
-    state.referralEarnings = userData.ref_earnings || 0;
-    state.referralCode = userData.referralCode || generateReferralCode(state.userId);
-    state.completedTasks = userData.completedTasks || [];
+    state.referrals = userData.refCount || 0;
+    state.referralEarnings = userData.refEarnings || 0;
+    state.referralCode = userData.refCode || generateReferralCode();
+    state.adViews = statsData.views || 0;
+    state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
     
     updateUI();
   } catch (error) {
@@ -739,7 +715,6 @@ async function loadUserData() {
   }
 }
 
-// Показ рекламы
 async function startAd() {
   if (state.isAdBlocked) {
     showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
@@ -751,24 +726,16 @@ async function startAd() {
   btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
 
   try {
-    // Интеграция с рекламным SDK
-    if (typeof window.showAd === 'function') {
-      await window.showAd();
-    } else {
-      // Тестовый режим (2 секунды ожидания)
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Отправка данных на сервер
-    const result = await makeRequest(`/api/user/${state.userId}/watch-ad`, 'POST', { 
-      ref: new URLSearchParams(window.location.search).get('ref') 
+    const result = await makeRequest('/api/watch-ad', 'POST', { 
+      userId: state.userId,
+      adType: 'video'
     });
 
-    state.balance = result.balance || state.balance;
-    state.adViews = result.adViews || state.adViews + 1;
-    state.isAdBlocked = result.isAdBlocked || false;
-    state.referrals = result.referrals || state.referrals;
-    state.referralEarnings = result.ref_earnings || state.referralEarnings;
+    state.balance += CONFIG.rewardPerAd;
+    state.adViews++;
+    state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
     
     updateUI();
     showNotification(`+$${CONFIG.rewardPerAd.toFixed(3)} за просмотр!`);
@@ -782,7 +749,6 @@ async function startAd() {
   }
 }
 
-// Вывод средств
 async function submitWithdrawal() {
   const wallet = document.getElementById('wallet').value.trim();
   const amount = parseFloat(document.getElementById('amount').value);
@@ -803,7 +769,7 @@ async function submitWithdrawal() {
   }
 
   try {
-    const result = await makeRequest('/api/withdrawals', 'POST', {
+    const result = await makeRequest('/api/withdraw', 'POST', {
       userId: state.userId,
       wallet: wallet,
       amount: amount
@@ -812,9 +778,8 @@ async function submitWithdrawal() {
     state.balance -= amount;
     updateUI();
     showPage('main-page');
-    showNotification(`Заявка #${result.withdrawalId} на $${amount.toFixed(2)} создана!`);
+    showNotification(`Заявка #${result.withdrawId} на $${amount.toFixed(2)} создана!`);
     
-    // Очистка формы
     document.getElementById('wallet').value = '';
     document.getElementById('amount').value = '';
   } catch (error) {
@@ -824,9 +789,8 @@ async function submitWithdrawal() {
   }
 }
 
-// Реферальная система
 function copyReferralLink() {
-  const link = document.getElementById('referral-link').textContent;
+  const link = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
   navigator.clipboard.writeText(link).then(() => {
     showNotification("Ссылка скопирована в буфер обмена!");
   }).catch(err => {
@@ -835,19 +799,17 @@ function copyReferralLink() {
   });
 }
 
-// Задания
 async function loadTasks() {
   try {
     state.tasks = await makeRequest('/api/tasks');
     renderTasks();
   } catch (error) {
-    console.error("Ошибка:", error);
+    console.error("Ошибка загрузки заданий:", error);
     document.getElementById('tasks-list').innerHTML = `
       <p style="text-align: center; color: var(--secondary-text);">
         Ошибка загрузки заданий. Попробуйте позже.
       </p>
     `;
-    tryReconnect();
   }
 }
 
@@ -891,12 +853,9 @@ async function startTask(taskId) {
     return;
   }
 
-  // Открываем задание в новой вкладке
   window.open(task.url, '_blank');
-  
   showNotification(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
   
-  // Проверяем выполнение через заданное время
   setTimeout(async () => {
     await completeTask(taskId);
   }, task.cooldown * 1000);
@@ -911,35 +870,32 @@ async function completeTask(taskId) {
     renderTasks();
     showNotification("Задание выполнено!");
   } catch (error) {
-    console.error("Ошибка:", error);
+    console.error("Ошибка выполнения задания:", error);
     showError(error.message || "Ошибка выполнения задания");
-    tryReconnect();
   }
 }
 
-// Админ-панель
 async function checkAdminPassword() {
   const password = document.getElementById('admin-password').value;
   
-  try {
-    const { token } = await makeRequest('/api/admin/login', 'POST', { password });
-    state.adminToken = token;
+  if (password === CONFIG.adminPassword) {
+    state.adminToken = "demo_admin_token";
     hideAdminLogin();
     showAdminPanel();
     loadWithdrawals();
     loadAdminTasks();
-  } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка авторизации");
+    showNotification("Вход выполнен успешно!");
+  } else {
+    showError("Неверный пароль");
   }
 }
 
 async function loadWithdrawals(filter = 'pending') {
   try {
-    const withdrawals = await makeRequest(`/api/admin/withdrawals?status=${filter}`, 'GET', null, true);
+    const withdrawals = await makeRequest(`/admin/withdrawals?status=${filter}`, 'GET', null, true);
     renderWithdrawals(withdrawals, filter);
   } catch (error) {
-    console.error("Ошибка:", error);
+    console.error("Ошибка загрузки заявок:", error);
     document.getElementById('withdrawals-list').innerHTML = `
       <p style="text-align: center; color: var(--secondary-text);">
         Ошибка загрузки заявок
@@ -978,7 +934,6 @@ function renderWithdrawals(withdrawals, filter) {
       <div style="margin: 8px 0; font-size: 14px;">
         <div>Кошелек: ${withdrawal.wallet}</div>
         <div>Пользователь: ${withdrawal.userId}</div>
-        <div>Просмотров: ${withdrawal.adViews}</div>
         <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
       </div>
       ${withdrawal.status === 'pending' ? `
@@ -996,32 +951,12 @@ function renderWithdrawals(withdrawals, filter) {
   });
 }
 
-function getStatusText(status) {
-  const statuses = {
-    'pending': 'Ожидает',
-    'completed': 'Выполнено',
-    'rejected': 'Отклонено'
-  };
-  return statuses[status] || status;
-}
-
-async function processWithdrawal(id, action) {
-  try {
-    await makeRequest(`/api/admin/withdrawals/${id}`, 'PUT', { status: action }, true);
-    loadWithdrawals('pending');
-    showNotification(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}`);
-  } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка обработки заявки");
-  }
-}
-
 async function loadAdminTasks() {
   try {
-    state.tasks = await makeRequest('/api/admin/tasks', 'GET', null, true);
+    state.tasks = await makeRequest('/api/tasks');
     renderAdminTasks();
   } catch (error) {
-    console.error("Ошибка:", error);
+    console.error("Ошибка загрузки заданий:", error);
     document.getElementById('current-tasks').innerHTML = `
       <p style="text-align: center; color: var(--secondary-text);">
         Ошибка загрузки заданий
@@ -1079,24 +1014,19 @@ async function addTask() {
     return;
   }
 
-  if (!url.startsWith('http')) {
-    showError("Ссылка должна начинаться с http:// или https://");
-    return;
-  }
-
   try {
-    const task = await makeRequest('/api/admin/tasks', 'POST', {
+    const task = {
+      id: 'task_' + Math.random().toString(36).substr(2, 9),
       title,
       reward,
       description,
       url,
       cooldown
-    }, true);
-
+    };
+    
     state.tasks.push(task);
     renderAdminTasks();
     
-    // Очищаем форму
     document.getElementById('new-task-title').value = '';
     document.getElementById('new-task-reward').value = '';
     document.getElementById('new-task-desc').value = '';
@@ -1105,8 +1035,8 @@ async function addTask() {
     
     showNotification("Задание добавлено!");
   } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка добавления задания");
+    console.error("Ошибка добавления задания:", error);
+    showError("Ошибка добавления задания");
   }
 }
 
@@ -1114,31 +1044,46 @@ async function deleteTask(taskId) {
   if (!confirm("Удалить это задание?")) return;
   
   try {
-    await makeRequest(`/api/admin/tasks/${taskId}`, 'DELETE', null, true);
     state.tasks = state.tasks.filter(t => t.id !== taskId);
     renderAdminTasks();
     showNotification("Задание удалено!");
   } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка удаления задания");
+    console.error("Ошибка удаления задания:", error);
+    showError("Ошибка удаления задания");
   }
 }
 
-// Общие функции
+async function processWithdrawal(id, action) {
+  try {
+    await makeRequest(`/admin/withdrawals/${id}`, 'PUT', { status: action }, true);
+    loadWithdrawals('pending');
+    showNotification(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}`);
+  } catch (error) {
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка обработки заявки");
+  }
+}
+
+function getStatusText(status) {
+  const statuses = {
+    'pending': 'Ожидает',
+    'completed': 'Выполнено',
+    'rejected': 'Отклонено'
+  };
+  return statuses[status] || status;
+}
+
 function updateUI() {
-  // Баланс и просмотры
   document.getElementById('balance').textContent = `$${state.balance.toFixed(3)}`;
   document.getElementById('available-balance').textContent = `$${state.balance.toFixed(3)}`;
   document.getElementById('ad-counter').textContent = state.adViews;
   document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
   
-  // Реферальная система
   document.getElementById('referral-count').textContent = state.referrals;
   document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
   document.getElementById('referral-code-display').textContent = state.referralCode;
   document.getElementById('referral-link').textContent = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
   
-  // Кнопка просмотра рекламы
   document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
 }
 
@@ -1183,23 +1128,18 @@ function hideAdminPanel() {
   document.getElementById('admin-panel').classList.add('hidden');
 }
 
-// Инициализация приложения
 async function init() {
-  // Скрываем заставку через 1.5 секунды
   setTimeout(() => {
     document.getElementById('splash-screen').style.opacity = '0';
     setTimeout(() => {
       document.getElementById('splash-screen').style.display = 'none';
       
-      // Проверяем соединение с сервером
       tryReconnect();
       
-      // Назначение обработчиков
       document.getElementById('watch-ad-btn').addEventListener('click', startAd);
       document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
       document.getElementById('retry-btn').addEventListener('click', tryReconnect);
       
-      // Горячая клавиша для админки
       document.addEventListener('keydown', (e) => {
         if (e.ctrlKey && e.altKey && e.key === 'a') {
           showAdminLogin();
@@ -1209,7 +1149,6 @@ async function init() {
   }, 1500);
 }
 
-// Запуск приложения
 document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
