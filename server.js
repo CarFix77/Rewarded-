@@ -8,7 +8,8 @@ const CONFIG = {
   REFERRAL_PERCENT: 0.15,
   REWARD_SECRET: "AdRewardsSecure123",
   ADMIN_PASSWORD: "AdGramAdmin777",
-  ADMIN_TOKEN: "demo_admin_token"
+  ADMIN_TOKEN: "demo_admin_token",
+  REWARD_URL: "https://test.adsgram.ai/reward?userid=[userId]&type=[type]&amount=[amount]"
 };
 
 const kv = await Deno.openKv();
@@ -21,7 +22,7 @@ app.use(router.routes());
 app.use(router.allowedMethods());
 
 // Middleware для проверки админского токена
-const adminAuth = async (ctx: any, next: any) => {
+const adminAuth = async (ctx, next) => {
   const authHeader = ctx.request.headers.get("Authorization");
   if (!authHeader || authHeader !== `Bearer ${CONFIG.ADMIN_TOKEN}`) {
     ctx.response.status = 401;
@@ -31,10 +32,43 @@ const adminAuth = async (ctx: any, next: any) => {
   await next();
 };
 
+// Функция для отправки реворд-запроса
+async function sendRewardRequest(userId, type, amount) {
+  try {
+    const rewardUrl = CONFIG.REWARD_URL
+      .replace("[userId]", userId)
+      .replace("[type]", type)
+      .replace("[amount]", amount);
+    
+    console.log(`Sending reward request to: ${rewardUrl}`);
+    const response = await fetch(rewardUrl);
+    
+    if (!response.ok) {
+      console.error(`Reward request failed: ${response.status}`);
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("Error sending reward request:", error);
+    return false;
+  }
+}
+
+// Генерация реферального кода
+function generateReferralCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let result = "";
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
 // Регистрация пользователя
 router.post("/api/register", async (ctx) => {
   try {
-    const { refCode } = await ctx.request.body().value;
+    const { refCode, telegramId } = await ctx.request.body().value;
     const userId = `user_${crypto.randomUUID()}`;
     const userRefCode = generateReferralCode();
     
@@ -46,7 +80,11 @@ router.post("/api/register", async (ctx) => {
             .set(["users", userId], { 
               balance: 0, 
               refCode: userRefCode,
-              refBy: refCode
+              refBy: refCode,
+              refCount: 0,
+              refEarnings: 0,
+              completedTasks: [],
+              telegramId: telegramId || null
             })
             .sum(["users", entry.key[1], "refCount"], 1)
             .commit();
@@ -62,7 +100,9 @@ router.post("/api/register", async (ctx) => {
       balance: 0, 
       refCode: userRefCode,
       refCount: 0,
-      refEarnings: 0
+      refEarnings: 0,
+      completedTasks: [],
+      telegramId: telegramId || null
     });
     
     ctx.response.body = { userId, refCode: userRefCode };
@@ -160,6 +200,11 @@ router.post("/api/watch-ad", async (ctx) => {
 
     await operations.commit();
 
+    // Отправляем реворд-запрос, если есть telegramId
+    if (user.value.telegramId) {
+      await sendRewardRequest(user.value.telegramId, "ad_view", reward);
+    }
+
     ctx.response.body = {
       success: true,
       reward,
@@ -245,19 +290,19 @@ router.post("/api/user/:userId/complete-task", adminAuth, async (ctx) => {
       return;
     }
 
-    // Получаем задание
-    const task = await kv.get(["tasks", taskId]);
-    if (!task.value) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "Task not found" };
-      return;
-    }
-
     // Получаем пользователя
     const user = await kv.get(["users", userId]);
     if (!user.value) {
       ctx.response.status = 404;
       ctx.response.body = { error: "User not found" };
+      return;
+    }
+
+    // Получаем задание
+    const task = await kv.get(["tasks", taskId]);
+    if (!task.value) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Task not found" };
       return;
     }
 
@@ -275,6 +320,11 @@ router.post("/api/user/:userId/complete-task", adminAuth, async (ctx) => {
       .sum(["users", userId, "balance"], reward)
       .set(["users", userId, "completedTasks"], [...completedTasks, taskId])
       .commit();
+
+    // Отправляем реворд-запрос, если есть telegramId
+    if (user.value.telegramId) {
+      await sendRewardRequest(user.value.telegramId, "task_complete", reward);
+    }
 
     ctx.response.body = { 
       success: true,
@@ -339,6 +389,53 @@ router.put("/admin/withdrawals/:id", adminAuth, async (ctx) => {
   }
 });
 
+// Добавление задания (админ)
+router.post("/admin/tasks", adminAuth, async (ctx) => {
+  try {
+    const { title, reward, description, url, cooldown } = await ctx.request.body().value;
+    
+    if (!title || !reward || !description || !url) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "All fields are required" };
+      return;
+    }
+    
+    const taskId = `task_${crypto.randomUUID()}`;
+    const task = {
+      id: taskId,
+      title,
+      reward: parseFloat(reward),
+      description,
+      url,
+      cooldown: cooldown ? parseInt(cooldown) : 10
+    };
+    
+    await kv.set(["tasks", taskId], task);
+    ctx.response.body = { success: true, taskId };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to add task" };
+  }
+});
+
+// Удаление задания (админ)
+router.delete("/admin/tasks/:id", adminAuth, async (ctx) => {
+  try {
+    const id = ctx.params.id;
+    if (!id) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Task ID is required" };
+      return;
+    }
+    
+    await kv.delete(["tasks", id]);
+    ctx.response.body = { success: true };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to delete task" };
+  }
+});
+
 // Главный эндпоинт
 router.get("/", (ctx) => {
   ctx.response.body = {
@@ -353,16 +450,6 @@ router.get("/", (ctx) => {
     }
   };
 });
-
-// Вспомогательные функции
-function generateReferralCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let result = "";
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
 
 // Запуск сервера
 const port = 8000;
