@@ -1,4 +1,5 @@
-import { Application, Router } from "https://deno.land/x/oak/mod.ts";
+import { Application, Router, send } from "https://deno.land/x/oak/mod.ts";
+import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
 const app = new Application();
 const router = new Router();
@@ -6,111 +7,79 @@ const kv = await Deno.openKv();
 
 // Конфигурация
 const CONFIG = {
-  secretKey: "wagner4625",   // Секретный ключ для API
-  rewardAmount: 0.0003,      // Награда за 1 просмотр
-  dailyLimit: 30             // Лимит начислений/день
+  secretKey: "wagner4625",
+  rewardAmount: 0.0003,
+  dailyLimit: 30
 };
 
-// Типы данных
-interface User {
-  userId: string;
-  balance: number;
-  lastRewardDate: string;
-  todayViews: number;
-}
+// Middleware для CORS
+app.use(oakCors());
 
-// Reward endpoint
-router.get("/reward", async (ctx) => {
+// API Endpoints
+router.get("/api/reward", async (ctx) => {
   const params = ctx.request.url.searchParams;
   const userId = params.get("userid");
   const key = params.get("key");
 
-  // 1. Проверка параметров
   if (!userId || !key) {
     ctx.response.status = 400;
-    return ctx.response.body = { 
-      success: false, 
-      error: "Нужны параметры: userid и key" 
-    };
+    return ctx.response.body = { error: "Missing parameters" };
   }
 
-  // 2. Проверка секретного ключа
   if (key !== CONFIG.secretKey) {
     ctx.response.status = 401;
-    return ctx.response.body = { 
-      success: false, 
-      error: "Неверный ключ" 
-    };
+    return ctx.response.body = { error: "Invalid key" };
   }
 
-  const today = new Date().toISOString().split("T")[0]; // Формат: YYYY-MM-DD
+  const today = new Date().toISOString().split("T")[0];
   const userKey = ["users", userId];
 
-  // 3. Получаем/создаем данные пользователя
-  let user = (await kv.get<User>(userKey)).value;
-  if (!user) {
-    user = {
-      userId,
-      balance: 0,
-      lastRewardDate: today,
-      todayViews: 0
-    };
-  }
+  let user = (await kv.get(userKey)).value || {
+    userId,
+    balance: 0,
+    lastRewardDate: today,
+    todayViews: 0
+  };
 
-  // 4. Сброс счетчика, если дата изменилась
   if (user.lastRewardDate !== today) {
     user.todayViews = 0;
     user.lastRewardDate = today;
   }
 
-  // 5. Проверка дневного лимита
   if (user.todayViews >= CONFIG.dailyLimit) {
     ctx.response.status = 429;
-    return ctx.response.body = { 
-      success: false, 
-      error: `Лимит ${CONFIG.dailyLimit} просмотров/день исчерпан` 
-    };
+    return ctx.response.body = { error: "Daily limit reached" };
   }
 
-  // 6. Начисление награды
   user.balance = parseFloat((user.balance + CONFIG.rewardAmount).toFixed(6));
   user.todayViews++;
 
-  // 7. Сохраняем данные
   await kv.set(userKey, user);
 
-  // 8. Успешный ответ
   ctx.response.body = {
     success: true,
-    userId,
     reward: CONFIG.rewardAmount,
     balance: user.balance,
-    viewsToday: user.todayViews,
-    viewsRemaining: CONFIG.dailyLimit - user.todayViews
+    viewsToday: user.todayViews
   };
 });
 
-// Статистика (для админа)
-router.get("/stats", async (ctx) => {
-  const totalUsers = await countUsers();
-  ctx.response.body = {
-    totalUsers,
-    rewardAmount: CONFIG.rewardAmount,
-    dailyLimit: CONFIG.dailyLimit
-  };
+// Статический фронтенд
+router.get("/", async (ctx) => {
+  await send(ctx, ctx.request.url.pathname, {
+    root: `${Deno.cwd()}/static`,
+    index: "index.html",
+  });
 });
 
-// Вспомогательные функции
-async function countUsers(): Promise<number> {
-  const iter = kv.list({ prefix: ["users"] });
-  let count = 0;
-  for await (const _ of iter) count++;
-  return count;
-}
-
-// Запуск сервера
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-console.log("🚀 Сервер запущен: http://localhost:8000");
+// Обработка 404
+app.use((ctx) => {
+  ctx.response.status = 404;
+  ctx.response.body = "Not Found";
+});
+
+console.log("Server running on http://localhost:8000");
 await app.listen({ port: 8000 });
