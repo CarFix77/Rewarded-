@@ -573,7 +573,7 @@
 
 <script>
 const CONFIG = {
-  apiUrl: "https://carfix77-rewarded-43.deno.dev",
+  apiUrl: "http://localhost:8000",
   rewardPerAd: 0.0003,
   dailyLimit: 30,
   minWithdraw: 1.00,
@@ -597,83 +597,22 @@ const state = {
   maxRetries: 5
 };
 
-async function makeRequest(endpoint, method = 'GET', body = null, auth = false) {
-  const headers = {
-    'Content-Type': 'application/json'
-  };
-  
-  if (auth && state.adminToken) {
-    headers['Authorization'] = `Bearer ${state.adminToken}`;
-  }
-  
-  const options = {
-    method,
-    headers
-  };
-  
-  if (body) {
-    options.body = JSON.stringify(body);
-  }
-  
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}${endpoint}`, options);
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error('Request failed:', error);
-    throw error;
-  }
-}
-
-async function checkConnection() {
-  try {
-    await makeRequest('/');
-    return true;
-  } catch (error) {
-    console.error("Connection check failed:", error);
-    return false;
-  }
-}
-
-function showConnectionError(show) {
-  document.getElementById('connection-error').classList.toggle('hidden', !show);
-  document.getElementById('app-container').style.display = show ? 'none' : 'block';
-}
-
-async function tryReconnect() {
-  const isConnected = await checkConnection();
-  
-  if (isConnected) {
-    showConnectionError(false);
-    if (state.connectionRetries > 0) {
-      window.location.reload();
-    } else {
-      initUser();
-    }
-    state.connectionRetries = 0;
-  } else {
-    state.connectionRetries++;
-    
-    if (state.connectionRetries >= state.maxRetries) {
-      showConnectionError(true);
-    } else {
-      setTimeout(tryReconnect, CONFIG.retryInterval);
-    }
-  }
-}
-
+// Основные функции
 async function initUser() {
   state.userId = localStorage.getItem('userId');
   
   if (!state.userId) {
     const refCode = new URLSearchParams(window.location.search).get('ref');
     try {
-      const data = await makeRequest('/api/register', 'POST', { refCode });
+      const response = await fetch(`${CONFIG.apiUrl}/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refCode })
+      });
+      
+      if (!response.ok) throw new Error('Registration failed');
+      
+      const data = await response.json();
       state.userId = data.userId;
       state.referralCode = data.refCode;
       localStorage.setItem('userId', state.userId);
@@ -688,22 +627,24 @@ async function initUser() {
   await loadUserData();
 }
 
-function generateReferralCode() {
-  return Math.random().toString(36).substring(2, 10).toUpperCase();
-}
-
 async function loadUserData() {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const [userResponse, statsResponse] = await Promise.all([
+      fetch(`${CONFIG.apiUrl}/api/user/${state.userId}`),
+      fetch(`${CONFIG.apiUrl}/api/stats/${state.userId}/${new Date().toISOString().split('T')[0]}`)
+    ]);
+
+    if (!userResponse.ok || !statsResponse.ok) throw new Error("Ошибка загрузки данных");
+
     const [userData, statsData] = await Promise.all([
-      makeRequest(`/api/user/${state.userId}`),
-      makeRequest(`/api/stats/${state.userId}/${today}`)
+      userResponse.json(),
+      statsResponse.json().catch(() => ({ views: 0 }))
     ]);
     
     state.balance = userData.balance || 0;
     state.referrals = userData.refCount || 0;
     state.referralEarnings = userData.refEarnings || 0;
-    state.referralCode = userData.refCode || generateReferralCode();
+    state.referralCode = userData.refCode || state.referralCode;
     state.adViews = statsData.views || 0;
     state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
     
@@ -726,14 +667,15 @@ async function startAd() {
   btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
 
   try {
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const response = await fetch(`${CONFIG.apiUrl}/api/reward?userid=${state.userId}`);
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Ошибка при просмотре рекламы");
+    }
 
-    const result = await makeRequest('/api/watch-ad', 'POST', { 
-      userId: state.userId,
-      adType: 'video'
-    });
-
-    state.balance += CONFIG.rewardPerAd;
+    const result = await response.json();
+    state.balance += result.reward || CONFIG.rewardPerAd;
     state.adViews++;
     state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
     
@@ -742,7 +684,6 @@ async function startAd() {
   } catch (error) {
     console.error("Ошибка:", error);
     showError(error.message || "Ошибка при просмотре рекламы");
-    tryReconnect();
   } finally {
     btn.disabled = state.isAdBlocked;
     btn.innerHTML = '<span>🎥</span> Смотреть рекламу (+$0.0003)';
@@ -769,12 +710,22 @@ async function submitWithdrawal() {
   }
 
   try {
-    const result = await makeRequest('/api/withdraw', 'POST', {
-      userId: state.userId,
-      wallet: wallet,
-      amount: amount
+    const response = await fetch(`${CONFIG.apiUrl}/api/withdraw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: state.userId,
+        wallet,
+        amount
+      })
     });
 
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Ошибка вывода");
+    }
+
+    const result = await response.json();
     state.balance -= amount;
     updateUI();
     showPage('main-page');
@@ -785,7 +736,6 @@ async function submitWithdrawal() {
   } catch (error) {
     console.error("Ошибка:", error);
     showError(error.message || "Ошибка при создании заявки");
-    tryReconnect();
   }
 }
 
@@ -801,7 +751,9 @@ function copyReferralLink() {
 
 async function loadTasks() {
   try {
-    state.tasks = await makeRequest('/api/tasks');
+    const response = await fetch(`${CONFIG.apiUrl}/api/tasks`);
+    if (!response.ok) throw new Error("Ошибка загрузки заданий");
+    state.tasks = await response.json();
     renderTasks();
   } catch (error) {
     console.error("Ошибка загрузки заданий:", error);
@@ -863,7 +815,15 @@ async function startTask(taskId) {
 
 async function completeTask(taskId) {
   try {
-    const result = await makeRequest(`/api/user/${state.userId}/complete-task`, 'POST', { taskId });
+    const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}/complete-task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId })
+    });
+    
+    if (!response.ok) throw new Error("Ошибка выполнения задания");
+    
+    const result = await response.json();
     state.balance = result.balance;
     state.completedTasks = result.completedTasks;
     updateUI();
@@ -875,16 +835,47 @@ async function completeTask(taskId) {
   }
 }
 
+// Админ-функции
+function showAdminLogin() {
+  document.getElementById('admin-login').classList.remove('hidden');
+}
+
+function hideAdminLogin() {
+  document.getElementById('admin-login').classList.add('hidden');
+  document.getElementById('admin-password').value = '';
+}
+
+function showAdminPanel() {
+  document.getElementById('admin-panel').classList.remove('hidden');
+  loadWithdrawals();
+  loadAdminTasks();
+}
+
+function hideAdminPanel() {
+  document.getElementById('admin-panel').classList.add('hidden');
+}
+
 async function checkAdminPassword() {
   const password = document.getElementById('admin-password').value;
   
   if (password === CONFIG.adminPassword) {
-    state.adminToken = "demo_admin_token";
-    hideAdminLogin();
-    showAdminPanel();
-    loadWithdrawals();
-    loadAdminTasks();
-    showNotification("Вход выполнен успешно!");
+    try {
+      const response = await fetch(`${CONFIG.apiUrl}/admin/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      
+      if (!response.ok) throw new Error("Auth failed");
+      
+      const { token } = await response.json();
+      state.adminToken = token;
+      hideAdminLogin();
+      showAdminPanel();
+      showNotification("Вход выполнен успешно!");
+    } catch (error) {
+      showError("Ошибка авторизации");
+    }
   } else {
     showError("Неверный пароль");
   }
@@ -892,7 +883,13 @@ async function checkAdminPassword() {
 
 async function loadWithdrawals(filter = 'pending') {
   try {
-    const withdrawals = await makeRequest(`/admin/withdrawals?status=${filter}`, 'GET', null, true);
+    const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals?status=${filter}`, {
+      headers: { 'Authorization': `Bearer ${state.adminToken}` }
+    });
+    
+    if (!response.ok) throw new Error("Ошибка загрузки заявок");
+    
+    const withdrawals = await response.json();
     renderWithdrawals(withdrawals, filter);
   } catch (error) {
     console.error("Ошибка загрузки заявок:", error);
@@ -951,9 +948,36 @@ function renderWithdrawals(withdrawals, filter) {
   });
 }
 
+async function processWithdrawal(id, action) {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
+      method: 'PUT',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.adminToken}`
+      },
+      body: JSON.stringify({ status: action })
+    });
+    
+    if (!response.ok) throw new Error("Ошибка обработки заявки");
+    
+    showNotification(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}`);
+    loadWithdrawals('pending');
+  } catch (error) {
+    console.error("Ошибка:", error);
+    showError(error.message || "Ошибка обработки заявки");
+  }
+}
+
 async function loadAdminTasks() {
   try {
-    state.tasks = await makeRequest('/api/tasks');
+    const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
+      headers: { 'Authorization': `Bearer ${state.adminToken}` }
+    });
+    
+    if (!response.ok) throw new Error("Ошибка загрузки заданий");
+    
+    state.tasks = await response.json();
     renderAdminTasks();
   } catch (error) {
     console.error("Ошибка загрузки заданий:", error);
@@ -1015,16 +1039,19 @@ async function addTask() {
   }
 
   try {
-    const task = {
-      id: 'task_' + Math.random().toString(36).substr(2, 9),
-      title,
-      reward,
-      description,
-      url,
-      cooldown
-    };
+    const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.adminToken}`
+      },
+      body: JSON.stringify({ title, reward, description, url, cooldown })
+    });
     
-    state.tasks.push(task);
+    if (!response.ok) throw new Error("Ошибка добавления задания");
+    
+    const newTask = await response.json();
+    state.tasks.push(newTask);
     renderAdminTasks();
     
     document.getElementById('new-task-title').value = '';
@@ -1044,6 +1071,15 @@ async function deleteTask(taskId) {
   if (!confirm("Удалить это задание?")) return;
   
   try {
+    const response = await fetch(`${CONFIG.apiUrl}/admin/tasks/${taskId}`, {
+      method: 'DELETE',
+      headers: { 
+        'Authorization': `Bearer ${state.adminToken}`
+      }
+    });
+    
+    if (!response.ok) throw new Error("Ошибка удаления задания");
+    
     state.tasks = state.tasks.filter(t => t.id !== taskId);
     renderAdminTasks();
     showNotification("Задание удалено!");
@@ -1053,24 +1089,9 @@ async function deleteTask(taskId) {
   }
 }
 
-async function processWithdrawal(id, action) {
-  try {
-    await makeRequest(`/admin/withdrawals/${id}`, 'PUT', { status: action }, true);
-    loadWithdrawals('pending');
-    showNotification(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}`);
-  } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка обработки заявки");
-  }
-}
-
-function getStatusText(status) {
-  const statuses = {
-    'pending': 'Ожидает',
-    'completed': 'Выполнено',
-    'rejected': 'Отклонено'
-  };
-  return statuses[status] || status;
+// Вспомогательные функции
+function generateReferralCode() {
+  return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
 function updateUI() {
@@ -1111,23 +1132,47 @@ function showError(message) {
   showNotification(message);
 }
 
-function showAdminLogin() {
-  document.getElementById('admin-login').classList.remove('hidden');
+function getStatusText(status) {
+  const statuses = {
+    'pending': 'Ожидает',
+    'completed': 'Выполнено',
+    'rejected': 'Отклонено'
+  };
+  return statuses[status] || status;
 }
 
-function hideAdminLogin() {
-  document.getElementById('admin-login').classList.add('hidden');
-  document.getElementById('admin-password').value = '';
+async function tryReconnect() {
+  try {
+    const response = await fetch(`${CONFIG.apiUrl}/health`);
+    if (response.ok) {
+      showConnectionError(false);
+      if (state.connectionRetries > 0) {
+        window.location.reload();
+      } else {
+        initUser();
+      }
+      state.connectionRetries = 0;
+      return;
+    }
+  } catch (error) {
+    console.error("Проверка соединения не удалась:", error);
+  }
+
+  state.connectionRetries++;
+  
+  if (state.connectionRetries >= state.maxRetries) {
+    showConnectionError(true);
+  } else {
+    setTimeout(tryReconnect, CONFIG.retryInterval);
+  }
 }
 
-function showAdminPanel() {
-  document.getElementById('admin-panel').classList.remove('hidden');
+function showConnectionError(show) {
+  document.getElementById('connection-error').classList.toggle('hidden', !show);
+  document.getElementById('app-container').style.display = show ? 'none' : 'block';
 }
 
-function hideAdminPanel() {
-  document.getElementById('admin-panel').classList.add('hidden');
-}
-
+// Инициализация
 async function init() {
   setTimeout(() => {
     document.getElementById('splash-screen').style.opacity = '0';
