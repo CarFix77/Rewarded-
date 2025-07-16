@@ -40,7 +40,7 @@ const decompressUser = (data) => ({
 });
 
 // Очистка данных пользователя
-async function cleanupUser(userId: string) {
+async function cleanupUser(userId) {
   const userEntry = await kv.get(["u", userId]);
   if (!userEntry.value) return;
 
