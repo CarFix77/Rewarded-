@@ -573,13 +573,15 @@
 
 <script>
 const CONFIG = {
-  apiUrl: "http://localhost:8000",
+  apiUrl: "https://carfix77-rewarded-71.deno.dev",
   rewardPerAd: 0.0003,
   dailyLimit: 30,
   minWithdraw: 1.00,
   referralPercent: 0.15,
   adminPassword: "AdGramAdmin777",
-  retryInterval: 5000
+  secretKey: "wagner4625",
+  retryInterval: 5000,
+  maxRetries: 5
 };
 
 const state = {
@@ -593,8 +595,7 @@ const state = {
   completedTasks: [],
   adminToken: null,
   tasks: [],
-  connectionRetries: 0,
-  maxRetries: 5
+  connectionRetries: 0
 };
 
 // Основные функции
@@ -610,7 +611,7 @@ async function initUser() {
         body: JSON.stringify({ refCode })
       });
       
-      if (!response.ok) throw new Error('Registration failed');
+      if (!response.ok) throw new Error('Ошибка регистрации');
       
       const data = await response.json();
       state.userId = data.userId;
@@ -647,6 +648,7 @@ async function loadUserData() {
     state.referralCode = userData.refCode || state.referralCode;
     state.adViews = statsData.views || 0;
     state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
+    state.completedTasks = userData.completedTasks || [];
     
     updateUI();
   } catch (error) {
@@ -667,7 +669,7 @@ async function startAd() {
   btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
 
   try {
-    const response = await fetch(`${CONFIG.apiUrl}/api/reward?userid=${state.userId}`);
+    const response = await fetch(`${CONFIG.apiUrl}/api/reward?userid=${state.userId}&key=${CONFIG.secretKey}`);
     
     if (!response.ok) {
       const errorData = await response.json();
@@ -1160,7 +1162,7 @@ async function tryReconnect() {
 
   state.connectionRetries++;
   
-  if (state.connectionRetries >= state.maxRetries) {
+  if (state.connectionRetries >= CONFIG.maxRetries) {
     showConnectionError(true);
   } else {
     setTimeout(tryReconnect, CONFIG.retryInterval);
