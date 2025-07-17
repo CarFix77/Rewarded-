@@ -13,12 +13,10 @@ const CONFIG = {
   minWithdraw: 1.00,
   referralPercent: 0.15,
   secretKey: "wagner4625",
-  keepWithdrawals: 3,
-  cleanupAfterDays: 7,
-  rewardUrl: "https://carfix77-rewarded-71.deno.dev/reward?userid=[userId]&key=wagner4625"
+  rewardUrl: "https://your-server.deno.dev/reward?userid=[userId]&key=wagner4625"
 };
 
-// Helpers
+// Helper функции
 const compressUser = (user) => ({
   b: user.balance,
   rc: user.refCode,
@@ -26,7 +24,8 @@ const compressUser = (user) => ({
   re: user.refEarnings || 0,
   ct: user.completedTasks || [],
   v: user.todayViews || 0,
-  l: user.lastRewardDate
+  l: user.lastRewardDate || "",
+  w: user.wallet || ""
 });
 
 const decompressUser = (data) => ({
@@ -36,54 +35,94 @@ const decompressUser = (data) => ({
   refEarnings: data.re,
   completedTasks: data.ct,
   todayViews: data.v,
-  lastRewardDate: data.l
+  lastRewardDate: data.l,
+  wallet: data.w
 });
 
-// Очистка данных пользователя
-async function cleanupUser(userId) {
-  const userEntry = await kv.get(["u", userId]);
-  if (!userEntry.value) return;
+// Middleware
+app.use(oakCors());
+app.use(router.routes());
+app.use(router.allowedMethods());
 
-  const user = decompressUser(userEntry.value);
-  
-  await kv.set(["u", userId], compressUser({
-    ...user,
-    todayViews: 0,
-    lastRewardDate: ""
-  }));
+// ==================== Основные API эндпоинты ====================
 
-  const withdrawals = [];
-  for await (const entry of kv.list({ prefix: ["w", userId] })) {
-    withdrawals.push(entry);
+// Reward endpoint для рекламных сетей
+router.get("/reward", async (ctx) => {
+  const params = ctx.request.url.searchParams;
+  const userId = params.get("userid");
+  const key = params.get("key");
+
+  // Валидация
+  if (!userId || key !== CONFIG.secretKey) {
+    ctx.response.status = 400;
+    return ctx.response.body = { error: "Invalid request" };
   }
-  
-  if (withdrawals.length > CONFIG.keepWithdrawals) {
-    withdrawals
-      .sort((a, b) => b.value[0] - a.value[0])
-      .slice(CONFIG.keepWithdrawals)
-      .forEach(async entry => await kv.delete(entry.key));
+
+  try {
+    const userEntry = await kv.get(["users", userId]);
+    if (!userEntry.value) {
+      ctx.response.status = 404;
+      return ctx.response.body = { error: "User not found" };
+    }
+
+    const user = decompressUser(userEntry.value);
+    const today = new Date().toISOString().split('T')[0];
+
+    // Сброс счетчика если новый день
+    if (user.lastRewardDate !== today) {
+      user.todayViews = 0;
+      user.lastRewardDate = today;
+    }
+
+    // Проверка лимита
+    if (user.todayViews >= CONFIG.dailyLimit) {
+      ctx.response.status = 429;
+      return ctx.response.body = { 
+        error: "Daily limit reached",
+        limit: CONFIG.dailyLimit
+      };
+    }
+
+    // Начисление награды
+    user.balance = parseFloat((user.balance + CONFIG.rewardPerAd).toFixed(6));
+    user.todayViews++;
+
+    await kv.set(["users", userId], compressUser(user));
+
+    ctx.response.body = {
+      success: true,
+      reward: CONFIG.rewardPerAd,
+      balance: user.balance,
+      viewsToday: user.todayViews,
+      viewsRemaining: CONFIG.dailyLimit - user.todayViews
+    };
+
+  } catch (error) {
+    console.error("Reward processing error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
   }
-}
+});
 
-// API Endpoints
-
-// Регистрация
+// Регистрация пользователя
 router.post("/api/register", async (ctx) => {
   try {
     const { refCode } = await ctx.request.body().value;
     const userId = `u${crypto.randomUUID().replace(/-/g, "")}`;
-    
+    const refCodeNew = Math.random().toString(36).substring(2, 10).toUpperCase();
+
     const userData = compressUser({
       balance: 0,
-      refCode: Math.random().toString(36).substring(2, 10).toUpperCase(),
-      lastRewardDate: new Date().toISOString().split('T')[0],
+      refCode: refCodeNew,
+      lastRewardDate: "",
       todayViews: 0
     });
 
-    await kv.set(["u", userId], userData);
+    await kv.set(["users", userId], userData);
 
+    // Реферальная логика
     if (refCode) {
-      for await (const entry of kv.list({ prefix: ["u"] })) {
+      for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.rc === refCode) {
           const referrer = decompressUser(entry.value);
           referrer.r += 1;
@@ -96,59 +135,14 @@ router.post("/api/register", async (ctx) => {
     ctx.response.body = {
       success: true,
       userId,
-      refCode: userData.rc
+      refCode: refCodeNew,
+      rewardUrl: CONFIG.rewardUrl.replace("[userId]", userId)
     };
+
   } catch (error) {
     ctx.response.status = 500;
     ctx.response.body = { error: "Registration failed" };
   }
-});
-
-// Просмотр рекламы (ревард-эндпоинт)
-router.get("/reward", async (ctx) => {
-  const params = ctx.request.url.searchParams;
-  const userId = params.get("userid");
-  const key = params.get("key");
-
-  if (!userId || key !== CONFIG.secretKey) {
-    ctx.response.status = 400;
-    return ctx.response.body = { error: "Invalid request" };
-  }
-
-  const today = new Date().toISOString().split('T')[0];
-  const userEntry = await kv.get(["u", userId]);
-  
-  if (!userEntry.value) {
-    ctx.response.status = 404;
-    return ctx.response.body = { error: "User not found" };
-  }
-
-  let user = decompressUser(userEntry.value);
-
-  if (user.lastRewardDate === "") {
-    user.lastRewardDate = today;
-    user.todayViews = 0;
-  }
-
-  if (user.todayViews >= CONFIG.dailyLimit) {
-    return ctx.response.body = { 
-      success: false, 
-      message: "Daily limit reached" 
-    };
-  }
-
-  user.balance += CONFIG.rewardPerAd;
-  user.todayViews++;
-  user.lastRewardDate = today;
-
-  await kv.set(["u", userId], compressUser(user));
-
-  ctx.response.body = {
-    success: true,
-    reward: CONFIG.rewardPerAd,
-    balance: user.balance,
-    viewsToday: user.todayViews
-  };
 });
 
 // Вывод средств
@@ -156,12 +150,18 @@ router.post("/api/withdraw", async (ctx) => {
   try {
     const { userId, wallet, amount } = await ctx.request.body().value;
     
-    if (!userId || !/^P\d{7,}$/.test(wallet) || amount < CONFIG.minWithdraw) {
+    // Валидация
+    if (!userId || !/^P\d{7,}$/.test(wallet)) {
       ctx.response.status = 400;
-      return ctx.response.body = { error: "Invalid request" };
+      return ctx.response.body = { error: "Invalid wallet format" };
     }
 
-    const userEntry = await kv.get(["u", userId]);
+    if (isNaN(amount) || amount < CONFIG.minWithdraw) {
+      ctx.response.status = 400;
+      return ctx.response.body = { error: `Minimum amount is $${CONFIG.minWithdraw}` };
+    }
+
+    const userEntry = await kv.get(["users", userId]);
     if (!userEntry.value) {
       ctx.response.status = 404;
       return ctx.response.body = { error: "User not found" };
@@ -174,223 +174,146 @@ router.post("/api/withdraw", async (ctx) => {
       return ctx.response.body = { error: "Insufficient balance" };
     }
 
-    const withdrawId = `w${Date.now()}`;
-    await kv.set(["w", userId, withdrawId], [
-      Date.now(),
-      Math.round(amount * 100),
-      wallet.substring(0, 8),
-      "pending"
-    ]);
+    // Создание заявки
+    const withdrawId = `wd${Date.now()}`;
+    await kv.set(["withdrawals", withdrawId], {
+      userId,
+      amount: parseFloat(amount.toFixed(2)),
+      wallet,
+      status: "pending",
+      date: new Date().toISOString()
+    });
 
-    user.balance -= amount;
-    await kv.set(["u", userId], compressUser(user));
-
-    await cleanupUser(userId);
+    // Обновление баланса
+    user.balance = parseFloat((user.balance - amount).toFixed(6));
+    user.wallet = wallet; // Сохраняем кошелек
+    await kv.set(["users", userId], compressUser(user));
 
     ctx.response.body = {
       success: true,
       withdrawId,
       newBalance: user.balance
     };
+
   } catch (error) {
     ctx.response.status = 500;
     ctx.response.body = { error: "Withdrawal failed" };
   }
 });
 
-// Данные пользователя
+// Получение данных пользователя
 router.get("/api/user/:id", async (ctx) => {
-  const userEntry = await kv.get(["u", ctx.params.id]);
-  if (!userEntry.value) {
-    ctx.response.status = 404;
-    return ctx.response.body = { error: "User not found" };
-  }
-
-  const user = decompressUser(userEntry.value);
-  
-  let withdrawalsCount = 0;
-  for await (const _ of kv.list({ prefix: ["w", ctx.params.id] })) {
-    withdrawalsCount++;
-  }
-
-  ctx.response.body = {
-    ...user,
-    withdrawalsCount,
-    isDataOptimized: user.lastRewardDate === ""
-  };
-});
-
-// Статистика за день
-router.get("/api/stats/:userId/:date", async (ctx) => {
-  const userEntry = await kv.get(["u", ctx.params.userId]);
-  if (!userEntry.value) {
-    ctx.response.status = 404;
-    return ctx.response.body = { error: "User not found" };
-  }
-
-  const user = decompressUser(userEntry.value);
-  
-  ctx.response.body = {
-    views: user.lastRewardDate === ctx.params.date ? user.todayViews : 0
-  };
-});
-
-// Задания
-router.get("/api/tasks", async (ctx) => {
-  const tasks = [];
-  for await (const entry of kv.list({ prefix: ["tasks"] })) {
-    tasks.push({
-      id: entry.key[1],
-      title: entry.value.title,
-      reward: entry.value.reward,
-      description: entry.value.description,
-      url: entry.value.url,
-      cooldown: entry.value.cooldown || 10
-    });
-  }
-  ctx.response.body = tasks;
-});
-
-// Завершение задания
-router.post("/api/user/:userId/complete-task", async (ctx) => {
   try {
-    const { taskId } = await ctx.request.body().value;
-    const userKey = ["u", ctx.params.userId];
-    const taskKey = ["tasks", taskId];
-    
-    const [userEntry, taskEntry] = await Promise.all([
-      kv.get(userKey),
-      kv.get(taskKey)
-    ]);
-    
-    if (!userEntry.value || !taskEntry.value) {
+    const userEntry = await kv.get(["users", ctx.params.id]);
+    if (!userEntry.value) {
       ctx.response.status = 404;
-      return ctx.response.body = { error: "Not found" };
+      return ctx.response.body = { error: "User not found" };
     }
-    
+
     const user = decompressUser(userEntry.value);
-    
-    if (user.completedTasks.includes(taskId)) {
-      ctx.response.status = 400;
-      return ctx.response.body = { error: "Task already completed" };
+
+    // Получаем историю выводов
+    const withdrawals = [];
+    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+      if (entry.value.userId === ctx.params.id) {
+        withdrawals.push(entry.value);
+      }
     }
-    
-    user.balance += taskEntry.value.reward;
-    user.completedTasks = [...user.completedTasks, taskId];
-    
-    await kv.set(userKey, compressUser(user));
-    
+
     ctx.response.body = {
-      success: true,
-      balance: user.balance,
-      completedTasks: user.completedTasks
+      ...user,
+      withdrawals,
+      rewardUrl: CONFIG.rewardUrl.replace("[userId]", ctx.params.id)
     };
+
   } catch (error) {
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to complete task" };
+    ctx.response.body = { error: "Server error" };
   }
 });
 
-// Админ-панель
+// ==================== Админ-панель ====================
+
+// Аутентификация админа
 router.post("/admin/auth", async (ctx) => {
   const { password } = await ctx.request.body().value;
   
   if (password === CONFIG.adminPassword) {
     const token = crypto.randomUUID();
-    await kv.set(["admin_token", token], { valid: true });
-    ctx.response.body = { success: true, token };
+    await kv.set(["admin_tokens", token], { 
+      valid: true,
+      createdAt: new Date().toISOString() 
+    });
+    
+    ctx.response.body = { 
+      success: true,
+      token 
+    };
   } else {
     ctx.response.status = 401;
     ctx.response.body = { error: "Invalid password" };
   }
 });
 
-// Заявки на вывод
-router.get("/admin/withdrawals", async (ctx) => {
+// Middleware для проверки админ-токена
+async function adminAuthMiddleware(ctx, next) {
   const token = ctx.request.headers.get("Authorization")?.replace("Bearer ", "");
   if (!token) {
     ctx.response.status = 401;
-    return ctx.response.body = { error: "Unauthorized" };
+    ctx.response.body = { error: "Token required" };
+    return;
   }
 
-  const tokenEntry = await kv.get(["admin_token", token]);
-  if (!tokenEntry.value) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Invalid token" };
+  const tokenEntry = await kv.get(["admin_tokens", token]);
+  if (!tokenEntry.value?.valid) {
+    ctx.response.status = 403;
+    ctx.response.body = { error: "Invalid token" };
+    return;
   }
 
+  await next();
+}
+
+// Управление заявками на вывод
+router.get("/admin/withdrawals", adminAuthMiddleware, async (ctx) => {
   const status = ctx.request.url.searchParams.get("status") || "pending";
   const withdrawals = [];
 
-  for await (const entry of kv.list({ prefix: ["w"] })) {
-    if (entry.value[3] === status) {
-      withdrawals.push({
-        id: entry.key[2],
-        userId: entry.key[1],
-        date: new Date(entry.value[0]).toISOString(),
-        amount: entry.value[1] / 100,
-        wallet: `P${entry.value[2]}`,
-        status: entry.value[3]
-      });
+  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+    if (entry.value.status === status) {
+      withdrawals.push(entry.value);
     }
   }
 
-  ctx.response.body = withdrawals.sort((a, b) => new Date(b.date) - new Date(a.date));
+  ctx.response.body = withdrawals.sort((a, b) => 
+    new Date(b.date) - new Date(a.date)
+  );
 });
 
-// Обработка заявки
-router.put("/admin/withdrawals/:id", async (ctx) => {
-  const token = ctx.request.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!token) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Unauthorized" };
-  }
-
-  const tokenEntry = await kv.get(["admin_token", token]);
-  if (!tokenEntry.value) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Invalid token" };
-  }
-
+router.put("/admin/withdrawals/:id", adminAuthMiddleware, async (ctx) => {
   const { status } = await ctx.request.body().value;
+  
   if (!["completed", "rejected"].includes(status)) {
     ctx.response.status = 400;
     return ctx.response.body = { error: "Invalid status" };
   }
 
-  let found = false;
-  for await (const entry of kv.list({ prefix: ["w"] })) {
-    if (entry.key[2] === ctx.params.id) {
-      const updatedValue = [...entry.value];
-      updatedValue[3] = status;
-      await kv.set(entry.key, updatedValue);
-      found = true;
-      break;
-    }
+  const entry = await kv.get(["withdrawals", ctx.params.id]);
+  if (!entry.value) {
+    ctx.response.status = 404;
+    return ctx.response.body = { error: "Not found" };
   }
 
-  if (!found) {
-    ctx.response.status = 404;
-    return ctx.response.body = { error: "Withdrawal not found" };
-  }
+  await kv.set(["withdrawals", ctx.params.id], {
+    ...entry.value,
+    status
+  });
 
   ctx.response.body = { success: true };
 });
 
 // Управление заданиями
-router.get("/admin/tasks", async (ctx) => {
-  const token = ctx.request.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!token) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Unauthorized" };
-  }
-
-  const tokenEntry = await kv.get(["admin_token", token]);
-  if (!tokenEntry.value) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Invalid token" };
-  }
-
+router.get("/admin/tasks", adminAuthMiddleware, async (ctx) => {
   const tasks = [];
   for await (const entry of kv.list({ prefix: ["tasks"] })) {
     tasks.push({
@@ -401,23 +324,12 @@ router.get("/admin/tasks", async (ctx) => {
   ctx.response.body = tasks;
 });
 
-router.post("/admin/tasks", async (ctx) => {
-  const token = ctx.request.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!token) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Unauthorized" };
-  }
-
-  const tokenEntry = await kv.get(["admin_token", token]);
-  if (!tokenEntry.value) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Invalid token" };
-  }
-
+router.post("/admin/tasks", adminAuthMiddleware, async (ctx) => {
   const { title, reward, description, url, cooldown } = await ctx.request.body().value;
+  
   if (!title || !reward || !description || !url) {
     ctx.response.status = 400;
-    return ctx.response.body = { error: "Missing required fields" };
+    return ctx.response.body = { error: "Missing fields" };
   }
 
   const taskId = crypto.randomUUID();
@@ -426,7 +338,7 @@ router.post("/admin/tasks", async (ctx) => {
     reward: parseFloat(reward),
     description,
     url,
-    cooldown: parseInt(cooldown) || 10
+    cooldown: cooldown ? parseInt(cooldown) : 10
   });
 
   ctx.response.body = {
@@ -435,32 +347,20 @@ router.post("/admin/tasks", async (ctx) => {
   };
 });
 
-router.delete("/admin/tasks/:id", async (ctx) => {
-  const token = ctx.request.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!token) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Unauthorized" };
-  }
-
-  const tokenEntry = await kv.get(["admin_token", token]);
-  if (!tokenEntry.value) {
-    ctx.response.status = 401;
-    return ctx.response.body = { error: "Invalid token" };
-  }
-
+router.delete("/admin/tasks/:id", adminAuthMiddleware, async (ctx) => {
   await kv.delete(["tasks", ctx.params.id]);
   ctx.response.body = { success: true };
 });
 
 // Health check
 router.get("/health", (ctx) => {
-  ctx.response.body = { status: "ok" };
+  ctx.response.body = { 
+    status: "ok",
+    version: "1.0",
+    uptime: process.uptime() 
+  };
 });
 
 // Запуск сервера
-app.use(oakCors());
-app.use(router.routes());
-app.use(router.allowedMethods());
-
-console.log("🚀 Server ready on http://localhost:8000");
+console.log("🚀 Server running on http://localhost:8000");
 await app.listen({ port: 8000 });
