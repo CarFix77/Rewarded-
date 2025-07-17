@@ -3,10 +3,8 @@ import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
-  DAILY_LIMIT: 30,
-  MIN_WITHDRAW: 1.00,
-  REFERRAL_PERCENT: 0.15,
-  REWARD_SECRET: "AdRewardsSecure123"
+  SECRET_KEY: "wagner46375", // Ваш секретный ключ
+  DAILY_LIMIT: 30
 };
 
 const kv = await Deno.openKv();
@@ -16,64 +14,65 @@ const router = new Router();
 // Настройка CORS
 app.use(oakCors({ origin: "*" }));
 
-// Reward Endpoint (Главный эндпоинт для рекламы)
+// Обработчик для callback от рекламной сети
 router.get("/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
 
-  // Валидация
-  if (!userId || secret !== CONFIG.REWARD_SECRET) {
+  // Валидация ключа
+  if (secret !== CONFIG.SECRET_KEY) {
+    ctx.response.status = 401;
+    ctx.response.body = { error: "Invalid secret key" };
+    return;
+  }
+
+  // Проверка userid
+  if (!userId || !/^\d+$/.test(userId)) {
     ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid parameters" };
+    ctx.response.body = { error: "Invalid user ID" };
     return;
   }
 
   try {
     const today = new Date().toISOString().split("T")[0];
-    const [user, dailyViews] = await Promise.all([
-      kv.get(["users", userId]),
-      kv.get(["stats", userId, today])
-    ]);
+    const dailyKey = ["daily", userId, today];
 
-    // Проверка лимитов
-    const viewsToday = dailyViews.value?.views || 0;
-    if (viewsToday >= CONFIG.DAILY_LIMIT) {
+    // Проверка дневного лимита
+    const dailyViews = (await kv.get(dailyKey)).value || 0;
+    if (dailyViews >= CONFIG.DAILY_LIMIT) {
       ctx.response.status = 429;
       ctx.response.body = { error: "Daily limit reached" };
       return;
     }
 
-    // Начисление
-    const reward = CONFIG.REWARD_PER_AD;
+    // Начисление вознаграждения
     await kv.atomic()
-      .sum(["users", userId, "balance"], reward)
-      .set(["stats", userId, today], { views: viewsToday + 1 })
+      .sum(["balance", userId], CONFIG.REWARD_PER_AD)
+      .set(dailyKey, dailyViews + 1)
       .commit();
 
     ctx.response.body = {
       success: true,
       userId,
-      reward,
-      viewsToday: viewsToday + 1
+      reward: CONFIG.REWARD_PER_AD,
+      balance: (await kv.get(["balance", userId])).value || 0,
+      viewsToday: dailyViews + 1
     };
+
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Reward processing failed" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Дополнительные эндпоинты
+// Статус сервера
 router.get("/", (ctx) => {
-  ctx.response.body = {
+  ctx.response.body = { 
     status: "OK",
-    app: "AdRewards+",
-    reward_url: "/reward?userid=[USER_ID]&secret=AdRewardsSecure123"
+    reward_endpoint: "/reward?userid=[USERID]&secret=wagner46375"
   };
 });
 
 app.use(router.routes());
-
-// Запуск сервера
-const port = 8000;
-console.log(`Server running on port ${port}`);
-await app.listen({ port });
+await app.listen({ port: 8000 });
