@@ -3,12 +3,10 @@ import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
+  SECRET_KEY: "wagner46375",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
-  REFERRAL_PERCENT: 0.15,
-  SECRET_KEY: "wagner46375",
-  ADMIN_PASSWORD: "AdGramAdmin777",
-  JWT_SECRET: "your_jwt_secret_123"
+  REFERRAL_PERCENT: 0.15
 };
 
 const kv = await Deno.openKv();
@@ -16,293 +14,140 @@ const app = new Application();
 const router = new Router();
 
 app.use(oakCors({ origin: "*" }));
-app.use(router.routes());
-app.use(router.allowedMethods());
 
-// Middleware для проверки JWT
-const authMiddleware = async (ctx: any, next: any) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader) {
-    ctx.response.status = 401;
-    ctx.response.body = { error: "Требуется авторизация" };
-    return;
-  }
-  
-  const token = authHeader.split(" ")[1];
-  try {
-    const payload = await verifyJwt(token);
-    ctx.state.userId = payload.userId;
-    await next();
-  } catch {
-    ctx.response.status = 403;
-    ctx.response.body = { error: "Неверный токен" };
-  }
+// Ключи для хранения данных
+const DATA_KEYS = {
+  BALANCE: (userId: string) => ["balance", userId],
+  DAILY_VIEWS: (userId: string, date: string) => ["daily", userId, date],
+  REFERRALS: (userId: string) => ["refs", userId],
+  COMPLETED_TASKS: (userId: string) => ["tasks", userId],
+  WITHDRAWALS: (userId: string) => ["withdrawals", userId]
 };
 
-// Генерация JWT
-async function generateJwt(userId: string): Promise<string> {
-  const payload = { userId, exp: Date.now() + 3600000 };
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(CONFIG.JWT_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(JSON.stringify(payload))
-  );
-  return btoa(JSON.stringify(payload)) + "." + btoa(String.fromCharCode(...new Uint8Array(signature)));
-}
-
-// Верификация JWT
-async function verifyJwt(token: string): Promise<any> {
-  const [headerPayload, signature] = token.split(".");
-  const payload = JSON.parse(atob(headerPayload));
-  
-  if (payload.exp < Date.now()) {
-    throw new Error("Token expired");
-  }
-  
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(CONFIG.JWT_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["verify"]
-  );
-  
-  const isValid = await crypto.subtle.verify(
-    "HMAC",
-    key,
-    new Uint8Array([...atob(signature)].map(c => c.charCodeAt(0))),
-    new TextEncoder().encode(headerPayload)
-  );
-  
-  if (!isValid) throw new Error("Invalid signature");
-  return payload;
-}
-
-// Регистрация нового пользователя
-router.post("/api/register", async (ctx) => {
-  const { refCode } = await ctx.request.body().value;
-  const userId = `user_${crypto.randomUUID()}`;
-  const referralCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-  
-  await kv.set(["users", userId], {
-    balance: 0,
-    refCode: referralCode,
-    refCount: 0,
-    refEarnings: 0,
-    completedTasks: []
-  });
-  
-  if (refCode) {
-    // Начисляем реферальный бонус
-    const referrer = await findUserByRefCode(refCode);
-    if (referrer) {
-      await kv.set(["users", referrer.userId], {
-        ...referrer,
-        refCount: (referrer.refCount || 0) + 1
-      });
-    }
-  }
-  
-  ctx.response.body = { userId, refCode: referralCode };
-});
-
-// Получение данных пользователя
-router.get("/api/user/:userId", async (ctx) => {
-  const user = await kv.get(["users", ctx.params.userId]);
-  ctx.response.body = user.value || { error: "User not found" };
-});
-
 // Начисление вознаграждения
-router.get("/api/reward", async (ctx) => {
+router.get("/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
-  const key = ctx.request.url.searchParams.get("key");
-  
-  if (key !== CONFIG.SECRET_KEY) {
+  const secret = ctx.request.url.searchParams.get("secret");
+
+  if (secret !== CONFIG.SECRET_KEY) {
     ctx.response.status = 401;
-    ctx.response.body = { error: "Invalid key" };
+    ctx.response.body = { error: "Invalid secret key" };
     return;
   }
-  
-  const today = new Date().toISOString().split("T")[0];
-  const [user, dailyStat] = await Promise.all([
-    kv.get(["users", userId]),
-    kv.get(["stats", userId, today])
-  ]);
-  
-  const viewsToday = dailyStat.value?.views || 0;
-  if (viewsToday >= CONFIG.DAILY_LIMIT) {
-    ctx.response.status = 429;
-    ctx.response.body = { error: "Daily limit reached" };
+
+  if (!userId || !/^\d+$/.test(userId)) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid user ID" };
     return;
   }
-  
-  const newBalance = (user.value?.balance || 0) + CONFIG.REWARD_PER_AD;
-  await kv.atomic()
-    .set(["users", userId], { ...user.value, balance: newBalance })
-    .set(["stats", userId, today], { views: viewsToday + 1 })
-    .commit();
-  
-  ctx.response.body = {
-    success: true,
-    reward: CONFIG.REWARD_PER_AD,
-    viewsToday: viewsToday + 1
-  };
+
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const dailyViews = (await kv.get(DATA_KEYS.DAILY_VIEWS(userId, today))).value || 0;
+
+    if (dailyViews >= CONFIG.DAILY_LIMIT) {
+      ctx.response.status = 429;
+      ctx.response.body = { error: "Daily limit reached" };
+      return;
+    }
+
+    // Атомарное обновление данных
+    await kv.atomic()
+      .sum(DATA_KEYS.BALANCE(userId), CONFIG.REWARD_PER_AD)
+      .set(DATA_KEYS.DAILY_VIEWS(userId, today), dailyViews + 1)
+      .commit();
+
+    ctx.response.body = {
+      success: true,
+      reward: CONFIG.REWARD_PER_AD,
+      viewsToday: dailyViews + 1,
+      balance: (await kv.get(DATA_KEYS.BALANCE(userId))).value || 0
+    };
+
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
 });
 
-// Вывод средств
-router.post("/api/withdraw", async (ctx) => {
-  const { userId, wallet, amount } = await ctx.request.body().value;
-  const user = await kv.get(["users", userId]);
-  
-  if (!user.value || user.value.balance < amount) {
+// Вывод средств с очисткой данных
+router.post("/withdraw", async (ctx) => {
+  const { userId, wallet } = await ctx.request.body().value;
+  const balanceKey = DATA_KEYS.BALANCE(userId);
+  const balance = (await kv.get(balanceKey)).value || 0;
+
+  if (balance < CONFIG.MIN_WITHDRAW) {
     ctx.response.status = 400;
-    ctx.response.body = { error: "Недостаточно средств" };
+    ctx.response.body = { error: `Minimum withdraw: $${CONFIG.MIN_WITHDRAW}` };
     return;
   }
-  
-  const withdrawId = crypto.randomUUID();
-  await kv.atomic()
-    .set(["users", userId], { ...user.value, balance: user.value.balance - amount })
-    .set(["withdrawals", withdrawId], {
-      userId,
+
+  try {
+    // Сохраняем рефералов перед очисткой
+    const referrals = (await kv.get(DATA_KEYS.REFERRALS(userId))).value || [];
+    
+    // Создаем запись о выводе
+    const withdrawId = crypto.randomUUID();
+    await kv.set([...DATA_KEYS.WITHDRAWALS(userId), withdrawId], {
+      amount: balance,
       wallet,
-      amount,
-      date: new Date().toISOString(),
-      status: "pending"
-    })
-    .commit();
-  
-  ctx.response.body = { success: true, withdrawId };
-});
+      date: new Date().toISOString()
+    });
 
-// Получение заданий
-router.get("/api/tasks", async (ctx) => {
-  const tasks = [];
-  for await (const entry of kv.list({ prefix: ["tasks"] })) {
-    tasks.push(entry.value);
-  }
-  ctx.response.body = tasks;
-});
+    // Очищаем все данные, кроме рефералов и истории выводов
+    await cleanUserData(userId, { preserveReferrals: true });
 
-// Завершение задания
-router.post("/api/user/:userId/complete-task", async (ctx) => {
-  const { taskId } = await ctx.request.body().value;
-  const user = await kv.get(["users", ctx.params.userId]);
-  const task = await kv.get(["tasks", taskId]);
-  
-  if (!task.value) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "Задание не найдено" };
-    return;
-  }
-  
-  const completedTasks = user.value?.completedTasks || [];
-  if (completedTasks.includes(taskId)) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Задание уже выполнено" };
-    return;
-  }
-  
-  const newBalance = (user.value?.balance || 0) + task.value.reward;
-  await kv.set(["users", ctx.params.userId], {
-    ...user.value,
-    balance: newBalance,
-    completedTasks: [...completedTasks, taskId]
-  });
-  
-  ctx.response.body = {
-    balance: newBalance,
-    completedTasks: [...completedTasks, taskId]
-  };
-});
+    ctx.response.body = { 
+      success: true,
+      amount: balance
+    };
 
-// Админ-панель
-router.post("/admin/auth", async (ctx) => {
-  const { password } = await ctx.request.body().value;
-  if (password === CONFIG.ADMIN_PASSWORD) {
-    const token = await generateJwt("admin");
-    ctx.response.body = { token };
-  } else {
-    ctx.response.status = 401;
-    ctx.response.body = { error: "Неверный пароль" };
+  } catch (error) {
+    console.error("Withdraw error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Withdrawal failed" };
   }
 });
 
-// Получение заявок на вывод
-router.get("/admin/withdrawals", authMiddleware, async (ctx) => {
-  const status = ctx.request.url.searchParams.get("status") || "pending";
-  const withdrawals = [];
+// Функция очистки данных пользователя
+async function cleanUserData(userId: string, options: { preserveReferrals: boolean }) {
+  const today = new Date().toISOString().split("T")[0];
   
-  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-    if (entry.value.status === status) {
-      withdrawals.push(entry.value);
+  // Удаляем ежедневную статистику (кроме сегодняшней)
+  const dailyKeys = [];
+  for await (const entry of kv.list({ prefix: DATA_KEYS.DAILY_VIEWS(userId, "") })) {
+    if (!entry.key.includes(today)) {
+      dailyKeys.push(entry.key);
     }
   }
-  
-  ctx.response.body = withdrawals;
-});
 
-// Обновление статуса вывода
-router.put("/admin/withdrawals/:id", authMiddleware, async (ctx) => {
-  const { status } = await ctx.request.body().value;
-  const withdrawal = await kv.get(["withdrawals", ctx.params.id]);
-  
-  if (!withdrawal.value) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "Заявка не найдена" };
-    return;
+  // Формируем атомарную операцию
+  const atomic = kv.atomic()
+    .delete(DATA_KEYS.BALANCE(userId))
+    .delete(DATA_KEYS.COMPLETED_TASKS(userId));
+
+  // Удаляем старую статистику
+  dailyKeys.forEach(key => atomic.delete(key));
+
+  // Сохраняем рефералов если нужно
+  if (!options.preserveReferrals) {
+    atomic.delete(DATA_KEYS.REFERRALS(userId));
   }
-  
-  await kv.set(["withdrawals", ctx.params.id], {
-    ...withdrawal.value,
-    status
-  });
-  
-  ctx.response.body = { success: true };
-});
 
-// Управление заданиями
-router.post("/admin/tasks", authMiddleware, async (ctx) => {
-  const { title, reward, description, url, cooldown } = await ctx.request.body().value;
-  const taskId = crypto.randomUUID();
-  
-  await kv.set(["tasks", taskId], {
-    id: taskId,
-    title,
-    reward,
-    description,
-    url,
-    cooldown
-  });
-  
-  ctx.response.body = { id: taskId };
-});
-
-router.delete("/admin/tasks/:id", authMiddleware, async (ctx) => {
-  await kv.delete(["tasks", ctx.params.id]);
-  ctx.response.body = { success: true };
-});
-
-// Health check
-router.get("/health", (ctx) => {
-  ctx.response.body = { status: "OK" };
-});
-
-// Поиск пользователя по реферальному коду
-async function findUserByRefCode(refCode: string) {
-  for await (const entry of kv.list({ prefix: ["users"] })) {
-    if (entry.value?.refCode === refCode) {
-      return { userId: entry.key[1], ...entry.value };
-    }
-  }
-  return null;
+  await atomic.commit();
 }
 
+// Статус сервера
+router.get("/", (ctx) => {
+  ctx.response.body = { 
+    status: "OK",
+    endpoints: {
+      reward: "/reward?userid=[USERID]&secret=wagner46375",
+      withdraw: "POST /withdraw {userId, wallet}"
+    }
+  };
+});
+
+app.use(router.routes());
 await app.listen({ port: 8000 });
