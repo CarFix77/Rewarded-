@@ -15,13 +15,13 @@ const router = new Router();
 
 app.use(oakCors({ origin: "*" }));
 
-// Ключи для хранения данных
+// Объект с функциями для генерации ключей
 const DATA_KEYS = {
-  BALANCE: (userId: string) => ["balance", userId],
-  DAILY_VIEWS: (userId: string, date: string) => ["daily", userId, date],
-  REFERRALS: (userId: string) => ["refs", userId],
-  COMPLETED_TASKS: (userId: string) => ["tasks", userId],
-  WITHDRAWALS: (userId: string) => ["withdrawals", userId]
+  BALANCE: (userId) => ["balance", userId],
+  DAILY_VIEWS: (userId, date) => ["daily", userId, date],
+  REFERRALS: (userId) => ["refs", userId],
+  COMPLETED_TASKS: (userId) => ["tasks", userId],
+  WITHDRAWALS: (userId) => ["withdrawals", userId]
 };
 
 // Начисление вознаграждения
@@ -51,7 +51,6 @@ router.get("/reward", async (ctx) => {
       return;
     }
 
-    // Атомарное обновление данных
     await kv.atomic()
       .sum(DATA_KEYS.BALANCE(userId), CONFIG.REWARD_PER_AD)
       .set(DATA_KEYS.DAILY_VIEWS(userId, today), dailyViews + 1)
@@ -71,11 +70,13 @@ router.get("/reward", async (ctx) => {
   }
 });
 
-// Вывод средств с очисткой данных
+// Вывод средств
 router.post("/withdraw", async (ctx) => {
-  const { userId, wallet } = await ctx.request.body().value;
-  const balanceKey = DATA_KEYS.BALANCE(userId);
-  const balance = (await kv.get(balanceKey)).value || 0;
+  const body = await ctx.request.body().value;
+  const userId = body.userId;
+  const wallet = body.wallet;
+
+  const balance = (await kv.get(DATA_KEYS.BALANCE(userId))).value || 0;
 
   if (balance < CONFIG.MIN_WITHDRAW) {
     ctx.response.status = 400;
@@ -84,10 +85,6 @@ router.post("/withdraw", async (ctx) => {
   }
 
   try {
-    // Сохраняем рефералов перед очисткой
-    const referrals = (await kv.get(DATA_KEYS.REFERRALS(userId))).value || [];
-    
-    // Создаем запись о выводе
     const withdrawId = crypto.randomUUID();
     await kv.set([...DATA_KEYS.WITHDRAWALS(userId), withdrawId], {
       amount: balance,
@@ -95,7 +92,7 @@ router.post("/withdraw", async (ctx) => {
       date: new Date().toISOString()
     });
 
-    // Очищаем все данные, кроме рефералов и истории выводов
+    // Очищаем данные, кроме рефералов
     await cleanUserData(userId, { preserveReferrals: true });
 
     ctx.response.body = { 
@@ -110,27 +107,23 @@ router.post("/withdraw", async (ctx) => {
   }
 });
 
-// Функция очистки данных пользователя
-async function cleanUserData(userId: string, options: { preserveReferrals: boolean }) {
+// Функция очистки данных
+async function cleanUserData(userId, options) {
   const today = new Date().toISOString().split("T")[0];
-  
-  // Удаляем ежедневную статистику (кроме сегодняшней)
   const dailyKeys = [];
+  
   for await (const entry of kv.list({ prefix: DATA_KEYS.DAILY_VIEWS(userId, "") })) {
-    if (!entry.key.includes(today)) {
+    if (!entry.key[2].includes(today)) {
       dailyKeys.push(entry.key);
     }
   }
 
-  // Формируем атомарную операцию
   const atomic = kv.atomic()
     .delete(DATA_KEYS.BALANCE(userId))
     .delete(DATA_KEYS.COMPLETED_TASKS(userId));
 
-  // Удаляем старую статистику
   dailyKeys.forEach(key => atomic.delete(key));
 
-  // Сохраняем рефералов если нужно
   if (!options.preserveReferrals) {
     atomic.delete(DATA_KEYS.REFERRALS(userId));
   }
