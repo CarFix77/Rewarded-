@@ -7,58 +7,51 @@ const CONFIG = {
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223" // Пароль для админки
+  ADMIN_PASSWORD: "8223Nn8223"
 };
 
 const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
+// Настройка CORS
 app.use(oakCors({ origin: "*" }));
-app.use(router.routes());
 
-// Генерация реферального кода
-function generateRefCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let result = "";
-  for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+// Генерация ID
+function generateId() {
+  return Math.random().toString(36).substring(2, 10);
 }
 
-// Регистрация пользователя с реферальной системой
+// Регистрация пользователя
 router.post("/register", async (ctx) => {
   const { refCode } = await ctx.request.body().value;
-  const userId = `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-  const userRefCode = generateRefCode();
+  const userId = `user_${generateId()}`;
+  const userRefCode = generateId().toUpperCase();
 
-  // Сохраняем нового пользователя
   await kv.set(["users", userId], {
     balance: 0,
     refCode: userRefCode,
     refCount: 0,
-    refEarnings: 0,
-    createdAt: new Date().toISOString(),
-    withdrawals: []
+    refEarnings: 0
   });
 
-  // Если есть реферальный код, начисляем бонус
+  // Начисление реферального бонуса
   if (refCode) {
-    const referrer = await findUserByRefCode(refCode);
-    if (referrer) {
-      const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-      await kv.set(["users", referrer.userId], {
-        ...referrer,
-        refCount: referrer.refCount + 1,
-        refEarnings: referrer.refEarnings + bonus,
-        balance: referrer.balance + bonus
-      });
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      if (entry.value.refCode === refCode) {
+        const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
+        await kv.set(entry.key, {
+          ...entry.value,
+          refCount: entry.value.refCount + 1,
+          refEarnings: entry.value.refEarnings + bonus,
+          balance: entry.value.balance + bonus
+        });
+        break;
+      }
     }
   }
 
-  ctx.response.body = { 
-    success: true,
+  ctx.response.body = {
     userId,
     refCode: userRefCode,
     refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
@@ -70,50 +63,34 @@ router.get("/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
 
-  // Валидация
   if (secret !== CONFIG.SECRET_KEY) {
     ctx.response.status = 401;
-    ctx.response.body = { error: "Invalid secret key" };
+    ctx.response.body = { error: "Invalid secret" };
     return;
   }
 
-  if (!userId) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "User ID required" };
+  const today = new Date().toISOString().split("T")[0];
+  const user = (await kv.get(["users", userId])).value || { balance: 0 };
+  const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+
+  if (dailyViews >= CONFIG.DAILY_LIMIT) {
+    ctx.response.status = 429;
+    ctx.response.body = { error: "Daily limit reached" };
     return;
   }
 
-  try {
-    const today = new Date().toISOString().split("T")[0];
-    const user = (await kv.get(["users", userId])).value;
-    const dailyViews = (await kv.get(["stats", userId, today])).value || 0;
+  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+  await kv.atomic()
+    .set(["users", userId], { ...user, balance: newBalance })
+    .set(["views", userId, today], dailyViews + 1)
+    .commit();
 
-    // Проверка лимита
-    if (dailyViews >= CONFIG.DAILY_LIMIT) {
-      ctx.response.status = 429;
-      ctx.response.body = { error: "Daily limit reached" };
-      return;
-    }
-
-    // Начисление
-    const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-    await kv.atomic()
-      .set(["users", userId], { ...user, balance: newBalance })
-      .set(["stats", userId, today], dailyViews + 1)
-      .commit();
-
-    ctx.response.body = {
-      success: true,
-      reward: CONFIG.REWARD_PER_AD,
-      balance: newBalance,
-      viewsToday: dailyViews + 1
-    };
-
-  } catch (error) {
-    console.error("Reward error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
+  ctx.response.body = {
+    success: true,
+    reward: CONFIG.REWARD_PER_AD,
+    balance: newBalance,
+    viewsToday: dailyViews + 1
+  };
 });
 
 // Вывод средств
@@ -121,60 +98,38 @@ router.post("/withdraw", async (ctx) => {
   const { userId, wallet, amount } = await ctx.request.body().value;
   const user = (await kv.get(["users", userId])).value;
 
-  // Валидация
-  if (!user || !wallet || !amount) {
+  if (!user || user.balance < amount || amount < CONFIG.MIN_WITHDRAW) {
     ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid data" };
+    ctx.response.body = { error: "Invalid withdrawal" };
     return;
   }
 
-  if (amount < CONFIG.MIN_WITHDRAW) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: `Minimum withdraw: $${CONFIG.MIN_WITHDRAW}` };
-    return;
-  }
-
-  if (user.balance < amount) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Insufficient balance" };
-    return;
-  }
-
-  // Создаем заявку на вывод
-  const withdrawId = crypto.randomUUID();
-  const withdrawal = {
-    id: withdrawId,
-    userId,
-    wallet,
-    amount,
-    date: new Date().toISOString(),
-    status: "pending"
-  };
-
+  const withdrawId = `wd_${generateId()}`;
   await kv.atomic()
     .set(["users", userId], { ...user, balance: user.balance - amount })
-    .set(["withdrawals", withdrawId], withdrawal)
+    .set(["withdrawals", withdrawId], {
+      userId,
+      amount,
+      wallet,
+      date: new Date().toISOString(),
+      status: "pending"
+    })
     .commit();
 
-  ctx.response.body = { 
-    success: true,
-    withdrawId,
-    newBalance: user.balance - amount
-  };
+  ctx.response.body = { success: true, withdrawId };
 });
 
 // Админ-панель
 router.post("/admin/login", async (ctx) => {
   const { password } = await ctx.request.body().value;
   if (password === CONFIG.ADMIN_PASSWORD) {
-    ctx.response.body = { success: true, token: "admin_auth_token" };
+    ctx.response.body = { success: true, token: "admin_" + generateId() };
   } else {
     ctx.response.status = 401;
-    ctx.response.body = { error: "Invalid password" };
+    ctx.response.body = { error: "Wrong password" };
   }
 });
 
-// Получение списка заявок на вывод
 router.get("/admin/withdrawals", async (ctx) => {
   const withdrawals = [];
   for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
@@ -183,69 +138,37 @@ router.get("/admin/withdrawals", async (ctx) => {
   ctx.response.body = withdrawals;
 });
 
-// Обработка вывода (одобрение/отклонение)
 router.post("/admin/withdrawals/:id", async (ctx) => {
   const { status } = await ctx.request.body().value;
-  const withdrawId = ctx.params.id;
-  const withdrawal = (await kv.get(["withdrawals", withdrawId])).value;
+  const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
 
   if (!withdrawal) {
     ctx.response.status = 404;
-    ctx.response.body = { error: "Withdrawal not found" };
+    ctx.response.body = { error: "Not found" };
     return;
   }
 
-  // Обновляем статус
-  await kv.set(["withdrawals", withdrawId], {
+  await kv.set(["withdrawals", ctx.params.id], {
     ...withdrawal,
     status,
     processedAt: new Date().toISOString()
   });
 
-  // Если отклоняем - возвращаем средства
-  if (status === "rejected") {
-    const user = (await kv.get(["users", withdrawal.userId])).value;
-    await kv.set(["users", withdrawal.userId], {
-      ...user,
-      balance: user.balance + withdrawal.amount
-    });
-  }
-
   ctx.response.body = { success: true };
 });
 
-// Статистика для админки
-router.get("/admin/stats", async (ctx) => {
-  const stats = {
-    totalUsers: 0,
-    totalWithdrawals: 0,
-    pendingWithdrawals: 0
+// Статус сервера
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    status: "OK",
+    endpoints: {
+      register: "POST /register",
+      reward: "/reward?userid=USERID&secret=wagner46375",
+      withdraw: "POST /withdraw",
+      admin: "/admin/login"
+    }
   };
-
-  // Считаем пользователей
-  for await (const _ of kv.list({ prefix: ["users"] })) {
-    stats.totalUsers++;
-  }
-
-  // Считаем выводы
-  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-    stats.totalWithdrawals++;
-    if (entry.value.status === "pending") stats.pendingWithdrawals++;
-  }
-
-  ctx.response.body = stats;
 });
 
-// Вспомогательные функции
-async function findUserByRefCode(refCode) {
-  for await (const entry of kv.list({ prefix: ["users"] })) {
-    if (entry.value.refCode === refCode) {
-      return { userId: entry.key[1], ...entry.value };
-    }
-  }
-  return null;
-}
-
-// Старт сервера
-console.log("Server running on http://localhost:8000");
+app.use(router.routes());
 await app.listen({ port: 8000 });
