@@ -583,41 +583,47 @@
 
     // Основные функции
     async function initUser() {
-      state.userId = localStorage.getItem('userId');
-      
-      if (!state.userId) {
-        const refCode = new URLSearchParams(window.location.search).get('ref');
-        try {
+      try {
+        state.userId = localStorage.getItem('userId');
+        
+        if (!state.userId) {
+          const refCode = new URLSearchParams(window.location.search).get('ref');
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ refCode })
           });
           
-          if (!response.ok) throw new Error('Ошибка регистрации');
+          if (!response.ok) {
+            const error = await response.text();
+            throw new Error(error || 'Ошибка регистрации');
+          }
           
           const data = await response.json();
+          if (!data.userId) throw new Error('Неверный ответ сервера');
+          
           state.userId = data.userId;
           state.referralCode = data.refCode;
           localStorage.setItem('userId', state.userId);
-        } catch (error) {
-          console.error("Ошибка регистрации:", error);
-          showConnectionError(true);
-          return;
         }
+        
+        await loadUserData();
+      } catch (error) {
+        console.error("Ошибка инициализации:", error);
+        showConnectionError(true);
       }
-      
-      await loadUserData();
     }
 
     async function loadUserData() {
       try {
+        const today = new Date().toISOString().split('T')[0];
         const [userResponse, statsResponse] = await Promise.all([
           fetch(`${CONFIG.apiUrl}/user/${state.userId}`),
-          fetch(`${CONFIG.apiUrl}/stats/${state.userId}/${new Date().toISOString().split('T')[0]}`)
+          fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`)
         ]);
 
-        if (!userResponse.ok || !statsResponse.ok) throw new Error('Ошибка загрузки данных');
+        if (!userResponse.ok) throw new Error('Ошибка загрузки данных пользователя');
+        if (!statsResponse.ok) throw new Error('Ошибка загрузки статистики');
         
         const [userData, statsData] = await Promise.all([
           userResponse.json(),
@@ -628,7 +634,7 @@
         state.referrals = userData.refCount || 0;
         state.referralEarnings = userData.refEarnings || 0;
         state.referralCode = userData.refCode || state.referralCode;
-        state.adViews = statsData.views || 0;
+        state.adViews = statsData || 0;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
         
         updateUI();
@@ -649,13 +655,15 @@
       btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
 
       try {
-        const response = await fetch(
-          `${CONFIG.apiUrl}/reward?userid=${state.userId}&secret=${CONFIG.secretKey}`
-        );
+        const url = new URL(`${CONFIG.apiUrl}/reward`);
+        url.searchParams.append('userid', state.userId);
+        url.searchParams.append('secret', CONFIG.secretKey);
+
+        const response = await fetch(url);
         
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Ошибка при просмотре рекламы");
+          const error = await response.text();
+          throw new Error(error || "Ошибка при просмотре рекламы");
         }
 
         const result = await response.json();
@@ -683,7 +691,12 @@
         return;
       }
 
-      if (isNaN(amount) || amount < CONFIG.minWithdraw) {
+      if (isNaN(amount) {
+        showError("Введите корректную сумму");
+        return;
+      }
+
+      if (amount < CONFIG.minWithdraw) {
         showError(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
         return;
       }
@@ -705,8 +718,8 @@
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Ошибка вывода");
+          const error = await response.text();
+          throw new Error(error || "Ошибка вывода");
         }
 
         const result = await response.json();
@@ -724,7 +737,7 @@
     }
 
     function copyReferralLink() {
-      const link = `${window.location.origin}?ref=${state.referralCode}`;
+      const link = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
       navigator.clipboard.writeText(link).then(() => {
         showNotification("Ссылка скопирована!");
       }).catch(err => {
@@ -752,6 +765,7 @@
 
     function renderTasks() {
       const container = document.getElementById('tasks-list');
+      container.innerHTML = '';
       
       if (!state.tasks || state.tasks.length === 0) {
         container.innerHTML = `
@@ -761,8 +775,6 @@
         `;
         return;
       }
-
-      container.innerHTML = '';
       
       state.tasks.forEach(task => {
         const isCompleted = state.completedTasks.includes(task.id);
@@ -841,8 +853,8 @@
         });
         
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Ошибка авторизации");
+          const error = await response.text();
+          throw new Error(error || "Ошибка авторизации");
         }
 
         const data = await response.json();
@@ -894,6 +906,7 @@
 
     function renderWithdrawals(withdrawals, filter) {
       const container = document.getElementById('withdrawals-list');
+      container.innerHTML = '';
       
       if (!withdrawals || withdrawals.length === 0) {
         container.innerHTML = `
@@ -903,8 +916,6 @@
         `;
         return;
       }
-
-      container.innerHTML = '';
       
       withdrawals.forEach(withdrawal => {
         const item = document.createElement('div');
@@ -982,6 +993,7 @@
 
     function renderAdminTasks() {
       const container = document.getElementById('current-tasks');
+      container.innerHTML = '';
       
       if (!state.tasks || state.tasks.length === 0) {
         container.innerHTML = `
@@ -991,8 +1003,6 @@
         `;
         return;
       }
-
-      container.innerHTML = '';
       
       state.tasks.forEach(task => {
         const taskEl = document.createElement('div');
@@ -1082,10 +1092,6 @@
     }
 
     // Вспомогательные функции
-    function generateReferralCode() {
-      return Math.random().toString(36).substring(2, 10).toUpperCase();
-    }
-
     function showPage(pageId) {
       document.querySelectorAll('.page').forEach(page => {
         page.classList.remove('active');
@@ -1106,7 +1112,7 @@
       document.getElementById('referral-count').textContent = state.referrals;
       document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
       document.getElementById('referral-code-display').textContent = state.referralCode;
-      document.getElementById('referral-link').textContent = `${window.location.origin}?ref=${state.referralCode}`;
+      document.getElementById('referral-link').textContent = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
       
       document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
     }
