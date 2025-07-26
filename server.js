@@ -11,27 +11,42 @@ const CONFIG = {
   ADMIN_PASSWORD: "8223Nn8223"
 };
 
+// Открываем KV-хранилище
 const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
 // Настройка CORS
 app.use(oakCors({ origin: "*" }));
+app.use(router.routes());
+app.use(router.allowedMethods());
+
+// Middleware для статических файлов
+app.use(async (ctx) => {
+  try {
+    await ctx.send({
+      root: `${Deno.cwd()}/public`,
+      index: "index.html",
+    });
+  } catch {
+    ctx.response.status = 404;
+    ctx.response.body = "Not Found";
+  }
+});
 
 // Генерация ID
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Регистрация пользователя
-router.post("/register", async (ctx) => {
-  const { refCode, telegramId } = await ctx.request.body().value;
+// API Endpoints
+router.post("/api/register", async (ctx) => {
+  const { refCode } = await ctx.request.body().value;
   const userId = `user_${generateId()}`;
   const userRefCode = generateId().toString();
 
   await kv.set(["users", userId], {
     balance: 0,
-    telegramId: telegramId || null,
     refCode: userRefCode,
     refCount: 0,
     refEarnings: 0,
@@ -41,7 +56,7 @@ router.post("/register", async (ctx) => {
   // Реферальный бонус
   if (refCode) {
     for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.refCode == refCode) {
+      if (entry.value.refCode === refCode) {
         const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
         await kv.set(entry.key, {
           ...entry.value,
@@ -61,12 +76,10 @@ router.post("/register", async (ctx) => {
   };
 });
 
-// Reward Webhook
-router.get("/reward", async (ctx) => {
+router.get("/api/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
 
-  // Проверка секрета (принимаем оба ключа)
   if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
     ctx.response.status = 401;
     ctx.response.body = { error: "Invalid secret" };
@@ -97,87 +110,6 @@ router.get("/reward", async (ctx) => {
   };
 });
 
-// Вывод средств
-router.post("/withdraw", async (ctx) => {
-  const { userId, wallet, amount } = await ctx.request.body().value;
-  const user = (await kv.get(["users", userId])).value;
-
-  if (!user || amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid withdrawal" };
-    return;
-  }
-
-  const withdrawId = `wd_${generateId()}`;
-  await kv.atomic()
-    .set(["users", userId], { ...user, balance: user.balance - amount })
-    .set(["withdrawals", withdrawId], {
-      userId,
-      amount,
-      wallet,
-      date: new Date().toISOString(),
-      status: "pending"
-    })
-    .commit();
-
-  ctx.response.body = { success: true, withdrawId };
-});
-
-// Админ-панель
-router.post("/admin/login", async (ctx) => {
-  const { password } = await ctx.request.body().value;
-  if (password === CONFIG.ADMIN_PASSWORD) {
-    ctx.response.body = { 
-      success: true, 
-      token: "admin_" + generateId() 
-    };
-  } else {
-    ctx.response.status = 401;
-    ctx.response.body = { error: "Wrong password" };
-  }
-});
-
-router.get("/admin/withdrawals", async (ctx) => {
-  const withdrawals = [];
-  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-    withdrawals.push(entry.value);
-  }
-  ctx.response.body = withdrawals;
-});
-
-router.post("/admin/withdrawals/:id", async (ctx) => {
-  const { status } = await ctx.request.body().value;
-  const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
-
-  if (!withdrawal) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "Not found" };
-    return;
-  }
-
-  await kv.set(["withdrawals", ctx.params.id], {
-    ...withdrawal,
-    status,
-    processedAt: new Date().toISOString()
-  });
-
-  ctx.response.body = { success: true };
-});
-
-// Статус сервера
-router.get("/", (ctx) => {
-  ctx.response.body = {
-    status: "OK",
-    endpoints: {
-      register: "POST /register",
-      reward: "/reward?userid=USERID&secret=wagner46375",
-      withdraw: "POST /withdraw",
-      admin: "/admin/login"
-    }
-  };
-});
-
 // Запуск сервера
-app.use(router.routes());
-await app.listen({ port: 8000 });
 console.log("Server running on http://localhost:8000");
+await app.listen({ port: 8000 });
