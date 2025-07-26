@@ -1,6 +1,5 @@
-const express = require('express');
-const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
+import { Application, Router } from "https://deno.land/x/oak/mod.ts";
+import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -12,155 +11,173 @@ const CONFIG = {
   ADMIN_PASSWORD: "8223Nn8223"
 };
 
-// Имитация базы данных
-const db = {
-  users: {},
-  withdrawals: {},
-  views: {},
-  tasks: []
-};
+const kv = await Deno.openKv();
+const app = new Application();
+const router = new Router();
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+// Настройка CORS
+app.use(oakCors({ origin: "*" }));
 
-// Middleware для проверки админ-авторизации
-const adminAuth = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer admin_')) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
-};
+// Генерация ID
+function generateId() {
+  return Math.floor(100000 + Math.random() * 900000);
+}
 
 // Регистрация пользователя
-app.post('/register', (req, res) => {
-  const { refCode } = req.body;
-  const userId = `user_${uuidv4()}`;
-  const userRefCode = Math.random().toString(36).substr(2, 8).toUpperCase();
+router.post("/register", async (ctx) => {
+  const { refCode, telegramId } = await ctx.request.body().value;
+  const userId = `user_${generateId()}`;
+  const userRefCode = generateId().toString();
 
-  db.users[userId] = {
+  await kv.set(["users", userId], {
     balance: 0,
+    telegramId: telegramId || null,
     refCode: userRefCode,
     refCount: 0,
     refEarnings: 0,
     createdAt: new Date().toISOString()
-  };
+  });
 
   // Реферальный бонус
   if (refCode) {
-    for (const [id, user] of Object.entries(db.users)) {
-      if (user.refCode === refCode) {
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      if (entry.value.refCode == refCode) {
         const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-        db.users[id] = {
-          ...user,
-          refCount: user.refCount + 1,
-          refEarnings: user.refEarnings + bonus,
-          balance: user.balance + bonus
-        };
+        await kv.set(entry.key, {
+          ...entry.value,
+          refCount: entry.value.refCount + 1,
+          refEarnings: entry.value.refEarnings + bonus,
+          balance: entry.value.balance + bonus
+        });
         break;
       }
     }
   }
 
-  res.json({
+  ctx.response.body = {
     userId,
-    refCode: userRefCode
-  });
+    refCode: userRefCode,
+    refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
+  };
 });
 
-// Просмотр рекламы
-app.get('/reward', (req, res) => {
-  const { userid, secret } = req.query;
+// Reward Webhook
+router.get("/reward", async (ctx) => {
+  const userId = ctx.request.url.searchParams.get("userid");
+  const secret = ctx.request.url.searchParams.get("secret");
 
+  // Проверка секрета (принимаем оба ключа)
   if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
-    return res.status(401).json({ error: "Invalid secret" });
+    ctx.response.status = 401;
+    ctx.response.body = { error: "Invalid secret" };
+    return;
   }
 
-  const today = new Date().toISOString().split('T')[0];
-  const user = db.users[userid] || { balance: 0 };
-  const dailyViews = db.views[`${userid}_${today}`] || 0;
+  const today = new Date().toISOString().split("T")[0];
+  const user = (await kv.get(["users", userId])).value || { balance: 0 };
+  const dailyViews = (await kv.get(["views", userId, today])).value || 0;
 
   if (dailyViews >= CONFIG.DAILY_LIMIT) {
-    return res.status(429).json({ error: "Daily limit reached" });
+    ctx.response.status = 429;
+    ctx.response.body = { error: "Daily limit reached" };
+    return;
   }
 
   const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-  db.users[userid] = { ...user, balance: newBalance };
-  db.views[`${userid}_${today}`] = dailyViews + 1;
+  await kv.atomic()
+    .set(["users", userId], { ...user, balance: newBalance })
+    .set(["views", userId, today], dailyViews + 1)
+    .commit();
 
-  res.json({
+  ctx.response.body = {
     success: true,
     reward: CONFIG.REWARD_PER_AD,
     balance: newBalance,
     viewsToday: dailyViews + 1
-  });
+  };
 });
 
 // Вывод средств
-app.post('/withdraw', (req, res) => {
-  const { userId, wallet, amount } = req.body;
-  const user = db.users[userId];
+router.post("/withdraw", async (ctx) => {
+  const { userId, wallet, amount } = await ctx.request.body().value;
+  const user = (await kv.get(["users", userId])).value;
 
   if (!user || amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-    return res.status(400).json({ error: "Invalid withdrawal" });
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid withdrawal" };
+    return;
   }
 
-  const withdrawId = `wd_${uuidv4()}`;
-  db.users[userId].balance -= amount;
-  db.withdrawals[withdrawId] = {
-    id: withdrawId,
-    userId,
-    amount,
-    wallet,
-    date: new Date().toISOString(),
-    status: "pending"
-  };
+  const withdrawId = `wd_${generateId()}`;
+  await kv.atomic()
+    .set(["users", userId], { ...user, balance: user.balance - amount })
+    .set(["withdrawals", withdrawId], {
+      userId,
+      amount,
+      wallet,
+      date: new Date().toISOString(),
+      status: "pending"
+    })
+    .commit();
 
-  res.json({ success: true, withdrawId });
+  ctx.response.body = { success: true, withdrawId };
 });
 
-// Админ-авторизация
-app.post('/admin/login', (req, res) => {
-  const { password } = req.body;
+// Админ-панель
+router.post("/admin/login", async (ctx) => {
+  const { password } = await ctx.request.body().value;
   if (password === CONFIG.ADMIN_PASSWORD) {
-    res.json({ 
+    ctx.response.body = { 
       success: true, 
-      token: `admin_${uuidv4()}`
-    });
+      token: "admin_" + generateId() 
+    };
   } else {
-    res.status(401).json({ error: "Wrong password" });
+    ctx.response.status = 401;
+    ctx.response.body = { error: "Wrong password" };
   }
 });
 
-// Получение заявок на вывод
-app.get('/admin/withdrawals', adminAuth, (req, res) => {
-  const { status = 'pending' } = req.query;
-  const withdrawals = Object.values(db.withdrawals)
-    .filter(w => w.status === status);
-  res.json(withdrawals);
+router.get("/admin/withdrawals", async (ctx) => {
+  const withdrawals = [];
+  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+    withdrawals.push(entry.value);
+  }
+  ctx.response.body = withdrawals;
 });
 
-// Обработка заявки на вывод
-app.put('/admin/withdrawals/:id', adminAuth, (req, res) => {
-  const { status } = req.body;
-  const withdrawal = db.withdrawals[req.params.id];
+router.post("/admin/withdrawals/:id", async (ctx) => {
+  const { status } = await ctx.request.body().value;
+  const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
 
   if (!withdrawal) {
-    return res.status(404).json({ error: "Not found" });
+    ctx.response.status = 404;
+    ctx.response.body = { error: "Not found" };
+    return;
   }
 
-  db.withdrawals[req.params.id] = {
+  await kv.set(["withdrawals", ctx.params.id], {
     ...withdrawal,
     status,
     processedAt: new Date().toISOString()
-  };
+  });
 
-  res.json({ success: true });
+  ctx.response.body = { success: true };
+});
+
+// Статус сервера
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    status: "OK",
+    endpoints: {
+      register: "POST /register",
+      reward: "/reward?userid=USERID&secret=wagner46375",
+      withdraw: "POST /withdraw",
+      admin: "/admin/login"
+    }
+  };
 });
 
 // Запуск сервера
-const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+app.use(router.routes());
+await app.listen({ port: 8000 });
+console.log("Server running on http://localhost:8000");
