@@ -834,26 +834,31 @@
     async function checkAdminPassword() {
       const password = document.getElementById('admin-password').value;
       
-      if (password === CONFIG.adminPassword) {
-        try {
-          const response = await fetch(`${CONFIG.apiUrl}/admin/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password })
-          });
-          
-          if (!response.ok) throw new Error("Auth failed");
-          
-          const { token } = await response.json();
-          state.adminToken = token;
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Ошибка авторизации");
+        }
+
+        const data = await response.json();
+        
+        if (data.token) {
+          state.adminToken = data.token;
           hideAdminLogin();
           showAdminPanel();
           showNotification("Вход выполнен успешно!");
-        } catch (error) {
-          showError("Ошибка авторизации");
+        } else {
+          throw new Error("Неверный ответ сервера");
         }
-      } else {
-        showError("Неверный пароль");
+      } catch (error) {
+        console.error("Ошибка авторизации:", error);
+        showError("Неверный пароль или ошибка сервера");
       }
     }
 
@@ -869,14 +874,15 @@
 
     async function loadWithdrawals(filter = 'pending') {
       try {
-        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals?status=${filter}`, {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
           headers: { 'Authorization': `Bearer ${state.adminToken}` }
         });
         
         if (!response.ok) throw new Error("Ошибка загрузки заявок");
         
-        const withdrawals = await response.json();
-        renderWithdrawals(withdrawals, filter);
+        const allWithdrawals = await response.json();
+        const filtered = allWithdrawals.filter(w => w.status === filter);
+        renderWithdrawals(filtered, filter);
       } catch (error) {
         console.error("Ошибка загрузки заявок:", error);
         document.getElementById('withdrawals-list').innerHTML = `
@@ -937,7 +943,7 @@
     async function processWithdrawal(id, status) {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
-          method: 'PUT',
+          method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${state.adminToken}`
