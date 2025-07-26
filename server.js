@@ -1,35 +1,43 @@
-import { Application, Router, send } from "https://deno.land/x/oak/mod.ts";
-import { oakCors } from "https://deno.land/x/cors/mod.ts";
+const express = require('express');
+const path = require('path');
+const cors = require('cors');
+const { v4: uuidv4 } = require('uuid');
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
-  REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223"
+  REFERRAL_PERCENT: 0.15
 };
 
-const kv = await Deno.openKv();
-const app = new Application();
-const router = new Router();
+// Имитация KV-хранилища Deno
+const db = {
+  users: new Map(),
+  views: new Map(),
+  withdrawals: new Map()
+};
 
-// Настройка CORS
-app.use(oakCors({ origin: "*" }));
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Генерация ID
 function generateId() {
-  return Math.floor(100000 + Math.random() * 900000);
+  return uuidv4();
 }
 
 // API Endpoints
-router.post("/api/register", async (ctx) => {
+app.post('/api/register', (req, res) => {
   try {
-    const { refCode } = await ctx.request.body().value;
+    const { refCode } = req.body;
     const userId = `user_${generateId()}`;
-    const userRefCode = generateId().toString();
+    const userRefCode = generateId();
 
-    await kv.set(["users", userId], {
+    db.users.set(userId, {
       balance: 0,
       refCode: userRefCode,
       refCount: 0,
@@ -37,100 +45,80 @@ router.post("/api/register", async (ctx) => {
       createdAt: new Date().toISOString()
     });
 
+    // Реферальная система
     if (refCode) {
-      for await (const entry of kv.list({ prefix: ["users"] })) {
-        if (entry.value.refCode === refCode) {
+      for (const [id, user] of db.users.entries()) {
+        if (user.refCode === refCode) {
           const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-          await kv.set(entry.key, {
-            ...entry.value,
-            refCount: entry.value.refCount + 1,
-            refEarnings: entry.value.refEarnings + bonus,
-            balance: entry.value.balance + bonus
+          db.users.set(id, {
+            ...user,
+            refCount: user.refCount + 1,
+            refEarnings: user.refEarnings + bonus,
+            balance: user.balance + bonus
           });
           break;
         }
       }
     }
 
-    ctx.response.body = {
+    res.json({
       success: true,
       userId,
       refCode: userRefCode,
-      refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
-    };
+      refLink: `${req.headers.host}?ref=${userRefCode}`
+    });
   } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-router.get("/api/reward", async (ctx) => {
+app.get('/api/reward', (req, res) => {
   try {
-    const userId = ctx.request.url.searchParams.get("userid");
-    const secret = ctx.request.url.searchParams.get("secret");
+    const { userid, secret } = req.query;
 
-    if (!userId || !secret) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Missing parameters" };
-      return;
+    if (!userid || !secret) {
+      return res.status(400).json({ error: "Missing parameters" });
     }
 
     if (secret !== CONFIG.SECRET_KEY) {
-      ctx.response.status = 401;
-      ctx.response.body = { error: "Invalid secret" };
-      return;
+      return res.status(401).json({ error: "Invalid secret" });
     }
 
-    const today = new Date().toISOString().split("T")[0];
-    const user = (await kv.get(["users", userId])).value;
-    const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+    const today = new Date().toISOString().split('T')[0];
+    const user = db.users.get(userid);
+    const dailyKey = `${userid}|${today}`;
+    const dailyViews = db.views.get(dailyKey) || 0;
 
     if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "User not found" };
-      return;
+      return res.status(404).json({ error: "User not found" });
     }
 
     if (dailyViews >= CONFIG.DAILY_LIMIT) {
-      ctx.response.status = 429;
-      ctx.response.body = { error: "Daily limit reached" };
-      return;
+      return res.status(429).json({ error: "Daily limit reached" });
     }
 
     const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-    await kv.atomic()
-      .set(["users", userId], { ...user, balance: newBalance })
-      .set(["views", userId, today], dailyViews + 1)
-      .commit();
+    db.users.set(userid, { ...user, balance: newBalance });
+    db.views.set(dailyKey, dailyViews + 1);
 
-    ctx.response.body = {
+    res.json({
       success: true,
       reward: CONFIG.REWARD_PER_AD,
       balance: newBalance,
       viewsToday: dailyViews + 1
-    };
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
-
-// Статические файлы (фронтенд)
-router.get("/(.*)", async (ctx) => {
-  try {
-    await send(ctx, ctx.request.url.pathname, {
-      root: `${Deno.cwd()}/public`,
-      index: "index.html",
     });
-  } catch {
-    ctx.response.status = 404;
-    ctx.response.body = "Not Found";
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Подключение роутов
-app.use(router.routes());
-app.use(router.allowedMethods());
+// Обслуживание фронтенда
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
-console.log("Server running on http://localhost:8000");
-await app.listen({ port: 8000 });
+// Запуск сервера
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
