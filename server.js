@@ -4,6 +4,7 @@ import { oakCors } from "https://deno.land/x/cors/mod.ts";
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
+  WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
@@ -19,26 +20,28 @@ app.use(oakCors({ origin: "*" }));
 
 // Генерация ID
 function generateId() {
-  return Math.random().toString(36).substring(2, 10);
+  return Math.floor(100000 + Math.random() * 900000);
 }
 
 // Регистрация пользователя
 router.post("/register", async (ctx) => {
-  const { refCode } = await ctx.request.body().value;
+  const { refCode, telegramId } = await ctx.request.body().value;
   const userId = `user_${generateId()}`;
-  const userRefCode = generateId().toUpperCase();
+  const userRefCode = generateId().toString();
 
   await kv.set(["users", userId], {
     balance: 0,
+    telegramId: telegramId || null,
     refCode: userRefCode,
     refCount: 0,
-    refEarnings: 0
+    refEarnings: 0,
+    createdAt: new Date().toISOString()
   });
 
-  // Начисление реферального бонуса
+  // Реферальный бонус
   if (refCode) {
     for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.refCode === refCode) {
+      if (entry.value.refCode == refCode) {
         const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
         await kv.set(entry.key, {
           ...entry.value,
@@ -58,12 +61,13 @@ router.post("/register", async (ctx) => {
   };
 });
 
-// Начисление вознаграждения
+// Reward Webhook
 router.get("/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
 
-  if (secret !== CONFIG.SECRET_KEY) {
+  // Проверка секрета (принимаем оба ключа)
+  if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
     ctx.response.status = 401;
     ctx.response.body = { error: "Invalid secret" };
     return;
@@ -98,7 +102,7 @@ router.post("/withdraw", async (ctx) => {
   const { userId, wallet, amount } = await ctx.request.body().value;
   const user = (await kv.get(["users", userId])).value;
 
-  if (!user || user.balance < amount || amount < CONFIG.MIN_WITHDRAW) {
+  if (!user || amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
     ctx.response.status = 400;
     ctx.response.body = { error: "Invalid withdrawal" };
     return;
@@ -123,7 +127,10 @@ router.post("/withdraw", async (ctx) => {
 router.post("/admin/login", async (ctx) => {
   const { password } = await ctx.request.body().value;
   if (password === CONFIG.ADMIN_PASSWORD) {
-    ctx.response.body = { success: true, token: "admin_" + generateId() };
+    ctx.response.body = { 
+      success: true, 
+      token: "admin_" + generateId() 
+    };
   } else {
     ctx.response.status = 401;
     ctx.response.body = { error: "Wrong password" };
@@ -170,5 +177,7 @@ router.get("/", (ctx) => {
   };
 });
 
+// Запуск сервера
 app.use(router.routes());
 await app.listen({ port: 8000 });
+console.log("Server running on http://localhost:8000");
