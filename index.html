@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AdRewards+</title>
+  <title>AdRewards PRO</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -150,18 +150,15 @@
       text-align: center;
     }
 
-    .withdrawal-item {
-      border: 1px solid var(--primary-dark);
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 16px;
-      background-color: var(--card-color);
-    }
-
     .task-item {
       margin-bottom: 20px;
       padding-bottom: 20px;
       border-bottom: 1px solid var(--primary-dark);
+    }
+
+    .task-reward {
+      color: var(--accent-color);
+      font-weight: bold;
     }
 
     .admin-task-item {
@@ -250,11 +247,6 @@
       padding: 5px;
     }
 
-    .back-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
     input, textarea {
       width: 100%;
       padding: 14px;
@@ -296,15 +288,6 @@
       color: white;
     }
 
-    h1, h2, h3 {
-      margin-bottom: 15px;
-      color: var(--text-color);
-    }
-
-    p {
-      margin-bottom: 10px;
-    }
-
     #admin-panel {
       position: fixed;
       top: 0;
@@ -315,6 +298,23 @@
       z-index: 1000;
       overflow-y: auto;
       padding: 20px;
+    }
+
+    #admin-login {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1001;
+    }
+
+    .admin-section {
+      margin-bottom: 30px;
     }
 
     #secret-admin-btn {
@@ -351,15 +351,6 @@
       100% { opacity: 0; }
     }
 
-    .task-reward {
-      color: var(--accent-color);
-      font-weight: bold;
-    }
-
-    .admin-section {
-      margin-bottom: 30px;
-    }
-
     .connection-error {
       position: fixed;
       top: 0;
@@ -374,16 +365,6 @@
       z-index: 2000;
       padding: 20px;
       text-align: center;
-    }
-
-    .connection-error h2 {
-      color: var(--error-color);
-      margin-bottom: 20px;
-    }
-
-    .connection-error p {
-      margin-bottom: 30px;
-      max-width: 300px;
     }
   </style>
 </head>
@@ -402,6 +383,7 @@
   <div id="copy-notification" class="copy-notification">Скопировано!</div>
 
   <div class="container" id="app-container">
+    <!-- Главная страница -->
     <div id="main-page" class="page active">
       <div class="card">
         <div class="balance">
@@ -436,6 +418,7 @@
       </div>
     </div>
 
+    <!-- Страница вывода -->
     <div id="withdraw-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -465,6 +448,7 @@
       </div>
     </div>
 
+    <!-- Реферальная программа -->
     <div id="referral-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -506,6 +490,7 @@
       </div>
     </div>
 
+    <!-- Страница заданий -->
     <div id="tasks-page" class="page">
       <button class="back-btn" onclick="showPage('main-page')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -523,6 +508,7 @@
     </div>
   </div>
 
+  <!-- Админ-панель -->
   <div id="admin-login" class="hidden">
     <div class="card" style="max-width: 400px; margin: 100px auto;">
       <h2 style="text-align: center; margin-bottom: 20px;">Админ-панель</h2>
@@ -571,632 +557,635 @@
 
   <button id="secret-admin-btn" title="Админ-панель"></button>
 
-<script>
-const CONFIG = {
-  apiUrl: "https://carfix77-rewarded-71.deno.dev",
-  rewardPerAd: 0.0003,
-  dailyLimit: 30,
-  minWithdraw: 1.00,
-  referralPercent: 0.15,
-  adminPassword: "AdGramAdmin777",
-  secretKey: "wagner4625",
-  retryInterval: 5000,
-  maxRetries: 5
-};
+  <script>
+    const CONFIG = {
+      apiUrl: "https://carfix77-rewarded-34.deno.dev",
+      rewardPerAd: 0.0003,
+      secretKey: "wagner46375",
+      dailyLimit: 30,
+      minWithdraw: 1.00,
+      referralPercent: 0.15,
+      adminPassword: "8223Nn8223"
+    };
 
-const state = {
-  userId: null,
-  balance: 0,
-  adViews: 0,
-  isAdBlocked: false,
-  referrals: 0,
-  referralEarnings: 0,
-  referralCode: "",
-  completedTasks: [],
-  adminToken: null,
-  tasks: [],
-  connectionRetries: 0
-};
+    const state = {
+      userId: null,
+      balance: 0,
+      adViews: 0,
+      isAdBlocked: false,
+      referrals: 0,
+      referralEarnings: 0,
+      referralCode: "",
+      completedTasks: [],
+      adminToken: null,
+      tasks: [],
+      connectionRetries: 0
+    };
 
-// Основные функции
-async function initUser() {
-  state.userId = localStorage.getItem('userId');
-  
-  if (!state.userId) {
-    const refCode = new URLSearchParams(window.location.search).get('ref');
-    try {
-      const response = await fetch(`${CONFIG.apiUrl}/api/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refCode })
-      });
+    // Основные функции
+    async function initUser() {
+      state.userId = localStorage.getItem('userId');
       
-      if (!response.ok) throw new Error('Ошибка регистрации');
-      
-      const data = await response.json();
-      state.userId = data.userId;
-      state.referralCode = data.refCode;
-      localStorage.setItem('userId', state.userId);
-    } catch (error) {
-      console.error("Ошибка регистрации:", error);
-      state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
-      state.referralCode = generateReferralCode();
-      localStorage.setItem('userId', state.userId);
-    }
-  }
-  
-  await loadUserData();
-}
-
-async function loadUserData() {
-  try {
-    const [userResponse, statsResponse] = await Promise.all([
-      fetch(`${CONFIG.apiUrl}/api/user/${state.userId}`),
-      fetch(`${CONFIG.apiUrl}/api/stats/${state.userId}/${new Date().toISOString().split('T')[0]}`)
-    ]);
-
-    if (!userResponse.ok || !statsResponse.ok) throw new Error("Ошибка загрузки данных");
-
-    const [userData, statsData] = await Promise.all([
-      userResponse.json(),
-      statsResponse.json().catch(() => ({ views: 0 }))
-    ]);
-    
-    state.balance = userData.balance || 0;
-    state.referrals = userData.refCount || 0;
-    state.referralEarnings = userData.refEarnings || 0;
-    state.referralCode = userData.refCode || state.referralCode;
-    state.adViews = statsData.views || 0;
-    state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
-    state.completedTasks = userData.completedTasks || [];
-    
-    updateUI();
-  } catch (error) {
-    console.error("Ошибка загрузки данных:", error);
-    showError("Ошибка загрузки данных");
-    tryReconnect();
-  }
-}
-
-async function startAd() {
-  if (state.isAdBlocked) {
-    showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
-    return;
-  }
-
-  const btn = document.getElementById('watch-ad-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
-
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/api/reward?userid=${state.userId}&key=${CONFIG.secretKey}`);
-    
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "Ошибка при просмотре рекламы");
-    }
-
-    const result = await response.json();
-    state.balance += result.reward || CONFIG.rewardPerAd;
-    state.adViews++;
-    state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
-    
-    updateUI();
-    showNotification(`+$${CONFIG.rewardPerAd.toFixed(3)} за просмотр!`);
-  } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка при просмотре рекламы");
-  } finally {
-    btn.disabled = state.isAdBlocked;
-    btn.innerHTML = '<span>🎥</span> Смотреть рекламу (+$0.0003)';
-  }
-}
-
-async function submitWithdrawal() {
-  const wallet = document.getElementById('wallet').value.trim();
-  const amount = parseFloat(document.getElementById('amount').value);
-
-  if (!/^P\d{7,}$/.test(wallet)) {
-    showError("Неверный формат PAYEER кошелька (должен начинаться с P и содержать минимум 7 цифр)");
-    return;
-  }
-
-  if (isNaN(amount) || amount < CONFIG.minWithdraw) {
-    showError(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
-    return;
-  }
-
-  if (amount > state.balance) {
-    showError(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
-    return;
-  }
-
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/api/withdraw`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: state.userId,
-        wallet,
-        amount
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "Ошибка вывода");
-    }
-
-    const result = await response.json();
-    state.balance -= amount;
-    updateUI();
-    showPage('main-page');
-    showNotification(`Заявка #${result.withdrawId} на $${amount.toFixed(2)} создана!`);
-    
-    document.getElementById('wallet').value = '';
-    document.getElementById('amount').value = '';
-  } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка при создании заявки");
-  }
-}
-
-function copyReferralLink() {
-  const link = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
-  navigator.clipboard.writeText(link).then(() => {
-    showNotification("Ссылка скопирована в буфер обмена!");
-  }).catch(err => {
-    console.error("Ошибка копирования:", err);
-    showError("Не удалось скопировать ссылку");
-  });
-}
-
-async function loadTasks() {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/api/tasks`);
-    if (!response.ok) throw new Error("Ошибка загрузки заданий");
-    state.tasks = await response.json();
-    renderTasks();
-  } catch (error) {
-    console.error("Ошибка загрузки заданий:", error);
-    document.getElementById('tasks-list').innerHTML = `
-      <p style="text-align: center; color: var(--secondary-text);">
-        Ошибка загрузки заданий. Попробуйте позже.
-      </p>
-    `;
-  }
-}
-
-function renderTasks() {
-  const container = document.getElementById('tasks-list');
-  
-  if (!state.tasks || state.tasks.length === 0) {
-    container.innerHTML = `
-      <p style="text-align: center; color: var(--secondary-text);">
-        Нет доступных заданий
-      </p>
-    `;
-    return;
-  }
-
-  container.innerHTML = '';
-  
-  state.tasks.forEach(task => {
-    const isCompleted = state.completedTasks.includes(task.id);
-    const taskEl = document.createElement('div');
-    taskEl.className = 'task-item';
-    taskEl.innerHTML = `
-      <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(2)})</span></h3>
-      <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
-      <button class="btn ${isCompleted ? 'btn-disabled' : ''}" 
-        onclick="startTask('${task.id}')" 
-        ${isCompleted ? 'disabled' : ''}>
-        ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
-      </button>
-    `;
-    container.appendChild(taskEl);
-  });
-}
-
-async function startTask(taskId) {
-  const task = state.tasks.find(t => t.id === taskId);
-  if (!task) return;
-
-  if (state.completedTasks.includes(taskId)) {
-    showNotification("Вы уже выполнили это задание!");
-    return;
-  }
-
-  window.open(task.url, '_blank');
-  showNotification(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
-  
-  setTimeout(async () => {
-    await completeTask(taskId);
-  }, task.cooldown * 1000);
-}
-
-async function completeTask(taskId) {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/api/user/${state.userId}/complete-task`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskId })
-    });
-    
-    if (!response.ok) throw new Error("Ошибка выполнения задания");
-    
-    const result = await response.json();
-    state.balance = result.balance;
-    state.completedTasks = result.completedTasks;
-    updateUI();
-    renderTasks();
-    showNotification("Задание выполнено!");
-  } catch (error) {
-    console.error("Ошибка выполнения задания:", error);
-    showError(error.message || "Ошибка выполнения задания");
-  }
-}
-
-// Админ-функции
-function showAdminLogin() {
-  document.getElementById('admin-login').classList.remove('hidden');
-}
-
-function hideAdminLogin() {
-  document.getElementById('admin-login').classList.add('hidden');
-  document.getElementById('admin-password').value = '';
-}
-
-function showAdminPanel() {
-  document.getElementById('admin-panel').classList.remove('hidden');
-  loadWithdrawals();
-  loadAdminTasks();
-}
-
-function hideAdminPanel() {
-  document.getElementById('admin-panel').classList.add('hidden');
-}
-
-async function checkAdminPassword() {
-  const password = document.getElementById('admin-password').value;
-  
-  if (password === CONFIG.adminPassword) {
-    try {
-      const response = await fetch(`${CONFIG.apiUrl}/admin/auth`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
-      });
-      
-      if (!response.ok) throw new Error("Auth failed");
-      
-      const { token } = await response.json();
-      state.adminToken = token;
-      hideAdminLogin();
-      showAdminPanel();
-      showNotification("Вход выполнен успешно!");
-    } catch (error) {
-      showError("Ошибка авторизации");
-    }
-  } else {
-    showError("Неверный пароль");
-  }
-}
-
-async function loadWithdrawals(filter = 'pending') {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals?status=${filter}`, {
-      headers: { 'Authorization': `Bearer ${state.adminToken}` }
-    });
-    
-    if (!response.ok) throw new Error("Ошибка загрузки заявок");
-    
-    const withdrawals = await response.json();
-    renderWithdrawals(withdrawals, filter);
-  } catch (error) {
-    console.error("Ошибка загрузки заявок:", error);
-    document.getElementById('withdrawals-list').innerHTML = `
-      <p style="text-align: center; color: var(--secondary-text);">
-        Ошибка загрузки заявок
-      </p>
-    `;
-  }
-}
-
-function renderWithdrawals(withdrawals, filter) {
-  const container = document.getElementById('withdrawals-list');
-  
-  if (!withdrawals || withdrawals.length === 0) {
-    container.innerHTML = `
-      <p style="text-align: center; color: var(--secondary-text);">
-        Нет заявок со статусом "${getStatusText(filter)}"
-      </p>
-    `;
-    return;
-  }
-
-  container.innerHTML = '';
-  
-  withdrawals.forEach(withdrawal => {
-    const item = document.createElement('div');
-    item.className = 'withdrawal-item';
-    item.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <strong>#${withdrawal.id}</strong>
-        <div>
-          <span>$${withdrawal.amount.toFixed(2)}</span>
-          <span class="status-badge status-${withdrawal.status}">
-            ${getStatusText(withdrawal.status)}
-          </span>
-        </div>
-      </div>
-      <div style="margin: 8px 0; font-size: 14px;">
-        <div>Кошелек: ${withdrawal.wallet}</div>
-        <div>Пользователь: ${withdrawal.userId}</div>
-        <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
-      </div>
-      ${withdrawal.status === 'pending' ? `
-      <div class="admin-actions">
-        <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
-          Одобрить
-        </button>
-        <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
-          Отклонить
-        </button>
-      </div>
-      ` : ''}
-    `;
-    container.appendChild(item);
-  });
-}
-
-async function processWithdrawal(id, action) {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
-      method: 'PUT',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.adminToken}`
-      },
-      body: JSON.stringify({ status: action })
-    });
-    
-    if (!response.ok) throw new Error("Ошибка обработки заявки");
-    
-    showNotification(`Заявка #${id} ${action === 'completed' ? 'одобрена' : 'отклонена'}`);
-    loadWithdrawals('pending');
-  } catch (error) {
-    console.error("Ошибка:", error);
-    showError(error.message || "Ошибка обработки заявки");
-  }
-}
-
-async function loadAdminTasks() {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
-      headers: { 'Authorization': `Bearer ${state.adminToken}` }
-    });
-    
-    if (!response.ok) throw new Error("Ошибка загрузки заданий");
-    
-    state.tasks = await response.json();
-    renderAdminTasks();
-  } catch (error) {
-    console.error("Ошибка загрузки заданий:", error);
-    document.getElementById('current-tasks').innerHTML = `
-      <p style="text-align: center; color: var(--secondary-text);">
-        Ошибка загрузки заданий
-      </p>
-    `;
-  }
-}
-
-function renderAdminTasks() {
-  const container = document.getElementById('current-tasks');
-  
-  if (!state.tasks || state.tasks.length === 0) {
-    container.innerHTML = `
-      <p style="text-align: center; color: var(--secondary-text);">
-        Нет созданных заданий
-      </p>
-    `;
-    return;
-  }
-
-  container.innerHTML = '';
-  
-  state.tasks.forEach(task => {
-    const taskEl = document.createElement('div');
-    taskEl.className = 'admin-task-item';
-    taskEl.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <strong>${task.title}</strong>
-        <button class="btn btn-danger" onclick="deleteTask('${task.id}')">
-          Удалить
-        </button>
-      </div>
-      <p style="white-space: pre-line; margin: 8px 0;">${task.description}</p>
-      <div style="display: flex; justify-content: space-between;">
-        <span>Награда: $${task.reward.toFixed(2)}</span>
-        <span>Таймер: ${task.cooldown} сек</span>
-      </div>
-      <div style="margin-top: 8px;">
-        <a href="${task.url}" target="_blank" style="color: var(--accent-color);">${task.url}</a>
-      </div>
-    `;
-    container.appendChild(taskEl);
-  });
-}
-
-async function addTask() {
-  const title = document.getElementById('new-task-title').value.trim();
-  const reward = parseFloat(document.getElementById('new-task-reward').value);
-  const description = document.getElementById('new-task-desc').value.trim();
-  const url = document.getElementById('new-task-url').value.trim();
-  const cooldown = parseInt(document.getElementById('new-task-cooldown').value) || 10;
-
-  if (!title || !reward || !description || !url) {
-    showError("Заполните все поля!");
-    return;
-  }
-
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.adminToken}`
-      },
-      body: JSON.stringify({ title, reward, description, url, cooldown })
-    });
-    
-    if (!response.ok) throw new Error("Ошибка добавления задания");
-    
-    const newTask = await response.json();
-    state.tasks.push(newTask);
-    renderAdminTasks();
-    
-    document.getElementById('new-task-title').value = '';
-    document.getElementById('new-task-reward').value = '';
-    document.getElementById('new-task-desc').value = '';
-    document.getElementById('new-task-url').value = '';
-    document.getElementById('new-task-cooldown').value = '10';
-    
-    showNotification("Задание добавлено!");
-  } catch (error) {
-    console.error("Ошибка добавления задания:", error);
-    showError("Ошибка добавления задания");
-  }
-}
-
-async function deleteTask(taskId) {
-  if (!confirm("Удалить это задание?")) return;
-  
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/admin/tasks/${taskId}`, {
-      method: 'DELETE',
-      headers: { 
-        'Authorization': `Bearer ${state.adminToken}`
-      }
-    });
-    
-    if (!response.ok) throw new Error("Ошибка удаления задания");
-    
-    state.tasks = state.tasks.filter(t => t.id !== taskId);
-    renderAdminTasks();
-    showNotification("Задание удалено!");
-  } catch (error) {
-    console.error("Ошибка удаления задания:", error);
-    showError("Ошибка удаления задания");
-  }
-}
-
-// Вспомогательные функции
-function generateReferralCode() {
-  return Math.random().toString(36).substring(2, 10).toUpperCase();
-}
-
-function updateUI() {
-  document.getElementById('balance').textContent = `$${state.balance.toFixed(3)}`;
-  document.getElementById('available-balance').textContent = `$${state.balance.toFixed(3)}`;
-  document.getElementById('ad-counter').textContent = state.adViews;
-  document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
-  
-  document.getElementById('referral-count').textContent = state.referrals;
-  document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
-  document.getElementById('referral-code-display').textContent = state.referralCode;
-  document.getElementById('referral-link').textContent = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
-  
-  document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
-}
-
-function showPage(pageId) {
-  document.querySelectorAll('.page').forEach(page => {
-    page.classList.remove('active');
-  });
-  document.getElementById(pageId).classList.add('active');
-  
-  if (pageId === 'tasks-page') {
-    loadTasks();
-  }
-}
-
-function showNotification(message) {
-  const notification = document.getElementById('copy-notification');
-  notification.textContent = message;
-  notification.style.display = 'block';
-  setTimeout(() => {
-    notification.style.display = 'none';
-  }, 2000);
-}
-
-function showError(message) {
-  showNotification(message);
-}
-
-function getStatusText(status) {
-  const statuses = {
-    'pending': 'Ожидает',
-    'completed': 'Выполнено',
-    'rejected': 'Отклонено'
-  };
-  return statuses[status] || status;
-}
-
-async function tryReconnect() {
-  try {
-    const response = await fetch(`${CONFIG.apiUrl}/health`);
-    if (response.ok) {
-      showConnectionError(false);
-      if (state.connectionRetries > 0) {
-        window.location.reload();
-      } else {
-        initUser();
-      }
-      state.connectionRetries = 0;
-      return;
-    }
-  } catch (error) {
-    console.error("Проверка соединения не удалась:", error);
-  }
-
-  state.connectionRetries++;
-  
-  if (state.connectionRetries >= CONFIG.maxRetries) {
-    showConnectionError(true);
-  } else {
-    setTimeout(tryReconnect, CONFIG.retryInterval);
-  }
-}
-
-function showConnectionError(show) {
-  document.getElementById('connection-error').classList.toggle('hidden', !show);
-  document.getElementById('app-container').style.display = show ? 'none' : 'block';
-}
-
-// Инициализация
-async function init() {
-  setTimeout(() => {
-    document.getElementById('splash-screen').style.opacity = '0';
-    setTimeout(() => {
-      document.getElementById('splash-screen').style.display = 'none';
-      
-      tryReconnect();
-      
-      document.getElementById('watch-ad-btn').addEventListener('click', startAd);
-      document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
-      document.getElementById('retry-btn').addEventListener('click', tryReconnect);
-      
-      document.addEventListener('keydown', (e) => {
-        if (e.ctrlKey && e.altKey && e.key === 'a') {
-          showAdminLogin();
+      if (!state.userId) {
+        const refCode = new URLSearchParams(window.location.search).get('ref');
+        try {
+          const response = await fetch(`${CONFIG.apiUrl}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refCode })
+          });
+          
+          if (!response.ok) throw new Error('Ошибка регистрации');
+          
+          const data = await response.json();
+          state.userId = data.userId;
+          state.referralCode = data.refCode;
+          localStorage.setItem('userId', state.userId);
+        } catch (error) {
+          console.error("Ошибка регистрации:", error);
+          state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+          state.referralCode = generateReferralCode();
+          localStorage.setItem('userId', state.userId);
         }
-      });
-    }, 500);
-  }, 1500);
-}
+      }
+      
+      await loadUserData();
+    }
 
-document.addEventListener('DOMContentLoaded', init);
-</script>
+    async function loadUserData() {
+      try {
+        const [userResponse, statsResponse] = await Promise.all([
+          fetch(`${CONFIG.apiUrl}/user/${state.userId}`),
+          fetch(`${CONFIG.apiUrl}/stats/${state.userId}/${new Date().toISOString().split('T')[0]}`)
+        ]);
+
+        const [userData, statsData] = await Promise.all([
+          userResponse.ok ? userResponse.json() : { balance: 0, refCode: state.referralCode, refCount: 0, refEarnings: 0 },
+          statsResponse.ok ? statsResponse.json() : { views: 0 }
+        ]);
+        
+        state.balance = userData.balance || 0;
+        state.referrals = userData.refCount || 0;
+        state.referralEarnings = userData.refEarnings || 0;
+        state.referralCode = userData.refCode || state.referralCode;
+        state.adViews = statsData.views || 0;
+        state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
+        
+        updateUI();
+      } catch (error) {
+        console.error("Ошибка загрузки данных:", error);
+        showError("Ошибка загрузки данных");
+        tryReconnect();
+      }
+    }
+
+    async function startAd() {
+      if (state.isAdBlocked) {
+        showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
+        return;
+      }
+
+      const btn = document.getElementById('watch-ad-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
+
+      try {
+        const response = await fetch(
+          `${CONFIG.apiUrl}/reward?userid=${state.userId}&secret=${CONFIG.secretKey}`
+        );
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Ошибка при просмотре рекламы");
+        }
+
+        const result = await response.json();
+        state.balance = result.balance;
+        state.adViews = result.viewsToday;
+        state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
+        
+        updateUI();
+        showNotification(`+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`);
+      } catch (error) {
+        console.error("Ошибка:", error);
+        showError(error.message || "Ошибка при просмотре рекламы");
+      } finally {
+        btn.disabled = state.isAdBlocked;
+        btn.innerHTML = '<span>🎥</span> Смотреть рекламу (+$0.0003)';
+      }
+    }
+
+    async function submitWithdrawal() {
+      const wallet = document.getElementById('wallet').value.trim();
+      const amount = parseFloat(document.getElementById('amount').value);
+
+      if (!/^P\d{7,}$/.test(wallet)) {
+        showError("Неверный формат PAYEER кошелька (P1234567)");
+        return;
+      }
+
+      if (isNaN(amount) || amount < CONFIG.minWithdraw) {
+        showError(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
+        return;
+      }
+
+      if (amount > state.balance) {
+        showError(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/withdraw`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: state.userId,
+            wallet,
+            amount
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Ошибка вывода");
+        }
+
+        const result = await response.json();
+        state.balance -= amount;
+        updateUI();
+        showPage('main-page');
+        showNotification(`Заявка #${result.withdrawId} на $${amount.toFixed(2)} создана!`);
+        
+        document.getElementById('wallet').value = '';
+        document.getElementById('amount').value = '';
+      } catch (error) {
+        console.error("Ошибка:", error);
+        showError(error.message || "Ошибка при создании заявки");
+      }
+    }
+
+    function copyReferralLink() {
+      const link = `${window.location.origin}?ref=${state.referralCode}`;
+      navigator.clipboard.writeText(link).then(() => {
+        showNotification("Ссылка скопирована!");
+      }).catch(err => {
+        console.error("Ошибка копирования:", err);
+        showError("Не удалось скопировать ссылку");
+      });
+    }
+
+    async function loadTasks() {
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/tasks`);
+        if (!response.ok) throw new Error("Ошибка загрузки заданий");
+        
+        state.tasks = await response.json();
+        renderTasks();
+      } catch (error) {
+        console.error("Ошибка загрузки заданий:", error);
+        document.getElementById('tasks-list').innerHTML = `
+          <p style="text-align: center; color: var(--secondary-text);">
+            Ошибка загрузки заданий. Попробуйте позже.
+          </p>
+        `;
+      }
+    }
+
+    function renderTasks() {
+      const container = document.getElementById('tasks-list');
+      
+      if (!state.tasks || state.tasks.length === 0) {
+        container.innerHTML = `
+          <p style="text-align: center; color: var(--secondary-text);">
+            Нет доступных заданий
+          </p>
+        `;
+        return;
+      }
+
+      container.innerHTML = '';
+      
+      state.tasks.forEach(task => {
+        const isCompleted = state.completedTasks.includes(task.id);
+        const taskEl = document.createElement('div');
+        taskEl.className = 'task-item';
+        taskEl.innerHTML = `
+          <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(2)})</span></h3>
+          <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
+          <button class="btn ${isCompleted ? 'btn-disabled' : ''}" 
+            onclick="startTask('${task.id}')" 
+            ${isCompleted ? 'disabled' : ''}>
+            ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
+          </button>
+        `;
+        container.appendChild(taskEl);
+      });
+    }
+
+    async function startTask(taskId) {
+      const task = state.tasks.find(t => t.id === taskId);
+      if (!task) return;
+
+      if (state.completedTasks.includes(taskId)) {
+        showNotification("Вы уже выполнили это задание!");
+        return;
+      }
+
+      window.open(task.url, '_blank');
+      showNotification(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
+      
+      setTimeout(async () => {
+        await completeTask(taskId);
+      }, task.cooldown * 1000);
+    }
+
+    async function completeTask(taskId) {
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId })
+        });
+        
+        if (!response.ok) throw new Error("Ошибка выполнения задания");
+        
+        const result = await response.json();
+        state.balance = result.balance;
+        state.completedTasks = result.completedTasks;
+        updateUI();
+        renderTasks();
+        showNotification("Задание выполнено!");
+      } catch (error) {
+        console.error("Ошибка выполнения задания:", error);
+        showError(error.message || "Ошибка выполнения задания");
+      }
+    }
+
+    // Админ-функции
+    function showAdminLogin() {
+      document.getElementById('admin-login').classList.remove('hidden');
+    }
+
+    function hideAdminLogin() {
+      document.getElementById('admin-login').classList.add('hidden');
+      document.getElementById('admin-password').value = '';
+    }
+
+    async function checkAdminPassword() {
+      const password = document.getElementById('admin-password').value;
+      
+      if (password === CONFIG.adminPassword) {
+        try {
+          const response = await fetch(`${CONFIG.apiUrl}/admin/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+          });
+          
+          if (!response.ok) throw new Error("Auth failed");
+          
+          const { token } = await response.json();
+          state.adminToken = token;
+          hideAdminLogin();
+          showAdminPanel();
+          showNotification("Вход выполнен успешно!");
+        } catch (error) {
+          showError("Ошибка авторизации");
+        }
+      } else {
+        showError("Неверный пароль");
+      }
+    }
+
+    function showAdminPanel() {
+      document.getElementById('admin-panel').classList.remove('hidden');
+      loadWithdrawals();
+      loadAdminTasks();
+    }
+
+    function hideAdminPanel() {
+      document.getElementById('admin-panel').classList.add('hidden');
+    }
+
+    async function loadWithdrawals(filter = 'pending') {
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals?status=${filter}`, {
+          headers: { 'Authorization': `Bearer ${state.adminToken}` }
+        });
+        
+        if (!response.ok) throw new Error("Ошибка загрузки заявок");
+        
+        const withdrawals = await response.json();
+        renderWithdrawals(withdrawals, filter);
+      } catch (error) {
+        console.error("Ошибка загрузки заявок:", error);
+        document.getElementById('withdrawals-list').innerHTML = `
+          <p style="text-align: center; color: var(--secondary-text);">
+            Ошибка загрузки заявок
+          </p>
+        `;
+      }
+    }
+
+    function renderWithdrawals(withdrawals, filter) {
+      const container = document.getElementById('withdrawals-list');
+      
+      if (!withdrawals || withdrawals.length === 0) {
+        container.innerHTML = `
+          <p style="text-align: center; color: var(--secondary-text);">
+            Нет заявок со статусом "${getStatusText(filter)}"
+          </p>
+        `;
+        return;
+      }
+
+      container.innerHTML = '';
+      
+      withdrawals.forEach(withdrawal => {
+        const item = document.createElement('div');
+        item.className = 'withdrawal-item';
+        item.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong>#${withdrawal.id}</strong>
+            <div>
+              <span>$${withdrawal.amount.toFixed(2)}</span>
+              <span class="status-badge status-${withdrawal.status}">
+                ${getStatusText(withdrawal.status)}
+              </span>
+            </div>
+          </div>
+          <div style="margin: 8px 0; font-size: 14px;">
+            <div>Кошелек: ${withdrawal.wallet}</div>
+            <div>Пользователь: ${withdrawal.userId}</div>
+            <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
+          </div>
+          ${withdrawal.status === 'pending' ? `
+          <div class="admin-actions">
+            <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
+              Одобрить
+            </button>
+            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
+              Отклонить
+            </button>
+          </div>
+          ` : ''}
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    async function processWithdrawal(id, status) {
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
+          method: 'PUT',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.adminToken}`
+          },
+          body: JSON.stringify({ status })
+        });
+        
+        if (!response.ok) throw new Error("Ошибка обработки заявки");
+        
+        showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
+        loadWithdrawals('pending');
+      } catch (error) {
+        console.error("Ошибка:", error);
+        showError(error.message || "Ошибка обработки заявки");
+      }
+    }
+
+    async function loadAdminTasks() {
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
+          headers: { 'Authorization': `Bearer ${state.adminToken}` }
+        });
+        
+        if (!response.ok) throw new Error("Ошибка загрузки заданий");
+        
+        state.tasks = await response.json();
+        renderAdminTasks();
+      } catch (error) {
+        console.error("Ошибка загрузки заданий:", error);
+        document.getElementById('current-tasks').innerHTML = `
+          <p style="text-align: center; color: var(--secondary-text);">
+            Ошибка загрузки заданий
+          </p>
+        `;
+      }
+    }
+
+    function renderAdminTasks() {
+      const container = document.getElementById('current-tasks');
+      
+      if (!state.tasks || state.tasks.length === 0) {
+        container.innerHTML = `
+          <p style="text-align: center; color: var(--secondary-text);">
+            Нет созданных заданий
+          </p>
+        `;
+        return;
+      }
+
+      container.innerHTML = '';
+      
+      state.tasks.forEach(task => {
+        const taskEl = document.createElement('div');
+        taskEl.className = 'admin-task-item';
+        taskEl.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong>${task.title}</strong>
+            <button class="btn btn-danger" onclick="deleteTask('${task.id}')">
+              Удалить
+            </button>
+          </div>
+          <p style="white-space: pre-line; margin: 8px 0;">${task.description}</p>
+          <div style="display: flex; justify-content: space-between;">
+            <span>Награда: $${task.reward.toFixed(2)}</span>
+            <span>Таймер: ${task.cooldown} сек</span>
+          </div>
+          <div style="margin-top: 8px;">
+            <a href="${task.url}" target="_blank" style="color: var(--accent-color);">${task.url}</a>
+          </div>
+        `;
+        container.appendChild(taskEl);
+      });
+    }
+
+    async function addTask() {
+      const title = document.getElementById('new-task-title').value.trim();
+      const reward = parseFloat(document.getElementById('new-task-reward').value);
+      const description = document.getElementById('new-task-desc').value.trim();
+      const url = document.getElementById('new-task-url').value.trim();
+      const cooldown = parseInt(document.getElementById('new-task-cooldown').value) || 10;
+
+      if (!title || !reward || !description || !url) {
+        showError("Заполните все поля!");
+        return;
+      }
+
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.adminToken}`
+          },
+          body: JSON.stringify({ title, reward, description, url, cooldown })
+        });
+        
+        if (!response.ok) throw new Error("Ошибка добавления задания");
+        
+        const newTask = await response.json();
+        state.tasks.push(newTask);
+        renderAdminTasks();
+        
+        // Очистка формы
+        document.getElementById('new-task-title').value = '';
+        document.getElementById('new-task-reward').value = '';
+        document.getElementById('new-task-desc').value = '';
+        document.getElementById('new-task-url').value = '';
+        document.getElementById('new-task-cooldown').value = '10';
+        
+        showNotification("Задание добавлено!");
+      } catch (error) {
+        console.error("Ошибка добавления задания:", error);
+        showError("Ошибка добавления задания");
+      }
+    }
+
+    async function deleteTask(taskId) {
+      if (!confirm("Удалить это задание?")) return;
+      
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/tasks/${taskId}`, {
+          method: 'DELETE',
+          headers: { 
+            'Authorization': `Bearer ${state.adminToken}`
+          }
+        });
+        
+        if (!response.ok) throw new Error("Ошибка удаления задания");
+        
+        state.tasks = state.tasks.filter(t => t.id !== taskId);
+        renderAdminTasks();
+        showNotification("Задание удалено!");
+      } catch (error) {
+        console.error("Ошибка удаления задания:", error);
+        showError("Ошибка удаления задания");
+      }
+    }
+
+    // Вспомогательные функции
+    function generateReferralCode() {
+      return Math.random().toString(36).substring(2, 10).toUpperCase();
+    }
+
+    function showPage(pageId) {
+      document.querySelectorAll('.page').forEach(page => {
+        page.classList.remove('active');
+      });
+      document.getElementById(pageId).classList.add('active');
+      
+      if (pageId === 'tasks-page') {
+        loadTasks();
+      }
+    }
+
+    function updateUI() {
+      document.getElementById('balance').textContent = `$${state.balance.toFixed(3)}`;
+      document.getElementById('available-balance').textContent = `$${state.balance.toFixed(3)}`;
+      document.getElementById('ad-counter').textContent = state.adViews;
+      document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
+      
+      document.getElementById('referral-count').textContent = state.referrals;
+      document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
+      document.getElementById('referral-code-display').textContent = state.referralCode;
+      document.getElementById('referral-link').textContent = `${window.location.origin}?ref=${state.referralCode}`;
+      
+      document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
+    }
+
+    function showNotification(message) {
+      const notification = document.getElementById('copy-notification');
+      notification.textContent = message;
+      notification.style.display = 'block';
+      setTimeout(() => {
+        notification.style.display = 'none';
+      }, 2000);
+    }
+
+    function showError(message) {
+      showNotification(message);
+    }
+
+    function getStatusText(status) {
+      const statuses = {
+        'pending': 'Ожидает',
+        'completed': 'Выполнено',
+        'rejected': 'Отклонено'
+      };
+      return statuses[status] || status;
+    }
+
+    async function tryReconnect() {
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/health`);
+        if (response.ok) {
+          showConnectionError(false);
+          if (state.connectionRetries > 0) {
+            window.location.reload();
+          } else {
+            initUser();
+          }
+          state.connectionRetries = 0;
+          return;
+        }
+      } catch (error) {
+        console.error("Проверка соединения не удалась:", error);
+      }
+
+      state.connectionRetries++;
+      
+      if (state.connectionRetries >= 5) {
+        showConnectionError(true);
+      } else {
+        setTimeout(tryReconnect, 5000);
+      }
+    }
+
+    function showConnectionError(show) {
+      document.getElementById('connection-error').classList.toggle('hidden', !show);
+      document.getElementById('app-container').style.display = show ? 'none' : 'block';
+    }
+
+    // Инициализация приложения
+    async function init() {
+      setTimeout(() => {
+        document.getElementById('splash-screen').style.opacity = '0';
+        setTimeout(() => {
+          document.getElementById('splash-screen').style.display = 'none';
+          
+          tryReconnect();
+          
+          document.getElementById('watch-ad-btn').addEventListener('click', startAd);
+          document.getElementById('retry-btn').addEventListener('click', tryReconnect);
+          
+          // Секретная кнопка админа
+          document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
+          
+          // Горячая клавиша для админа (Ctrl+Alt+A)
+          document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.altKey && e.key === 'a') {
+              showAdminLogin();
+            }
+          });
+        }, 500);
+      }, 1500);
+    }
+
+    // Запуск приложения
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
 </body>
 </html>
