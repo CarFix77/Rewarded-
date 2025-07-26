@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AdRewards PRO</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       --primary-color: #1a5c32;
@@ -603,9 +602,8 @@
           localStorage.setItem('userId', state.userId);
         } catch (error) {
           console.error("Ошибка регистрации:", error);
-          state.userId = 'user_' + Math.random().toString(36).substr(2, 9);
-          state.referralCode = generateReferralCode();
-          localStorage.setItem('userId', state.userId);
+          showConnectionError(true);
+          return;
         }
       }
       
@@ -619,9 +617,11 @@
           fetch(`${CONFIG.apiUrl}/stats/${state.userId}/${new Date().toISOString().split('T')[0]}`)
         ]);
 
+        if (!userResponse.ok || !statsResponse.ok) throw new Error('Ошибка загрузки данных');
+        
         const [userData, statsData] = await Promise.all([
-          userResponse.ok ? userResponse.json() : { balance: 0, refCode: state.referralCode, refCount: 0, refEarnings: 0 },
-          statsResponse.ok ? statsResponse.json() : { views: 0 }
+          userResponse.json(),
+          statsResponse.json()
         ]);
         
         state.balance = userData.balance || 0;
@@ -634,8 +634,7 @@
         updateUI();
       } catch (error) {
         console.error("Ошибка загрузки данных:", error);
-        showError("Ошибка загрузки данных");
-        tryReconnect();
+        showConnectionError(true);
       }
     }
 
@@ -1125,6 +1124,11 @@
       showNotification(message);
     }
 
+    function showConnectionError(show) {
+      document.getElementById('connection-error').classList.toggle('hidden', !show);
+      document.getElementById('app-container').style.display = show ? 'none' : 'block';
+    }
+
     function getStatusText(status) {
       const statuses = {
         'pending': 'Ожидает',
@@ -1134,37 +1138,6 @@
       return statuses[status] || status;
     }
 
-    async function tryReconnect() {
-      try {
-        const response = await fetch(`${CONFIG.apiUrl}/health`);
-        if (response.ok) {
-          showConnectionError(false);
-          if (state.connectionRetries > 0) {
-            window.location.reload();
-          } else {
-            initUser();
-          }
-          state.connectionRetries = 0;
-          return;
-        }
-      } catch (error) {
-        console.error("Проверка соединения не удалась:", error);
-      }
-
-      state.connectionRetries++;
-      
-      if (state.connectionRetries >= 5) {
-        showConnectionError(true);
-      } else {
-        setTimeout(tryReconnect, 5000);
-      }
-    }
-
-    function showConnectionError(show) {
-      document.getElementById('connection-error').classList.toggle('hidden', !show);
-      document.getElementById('app-container').style.display = show ? 'none' : 'block';
-    }
-
     // Инициализация приложения
     async function init() {
       setTimeout(() => {
@@ -1172,10 +1145,11 @@
         setTimeout(() => {
           document.getElementById('splash-screen').style.display = 'none';
           
-          tryReconnect();
-          
           document.getElementById('watch-ad-btn').addEventListener('click', startAd);
-          document.getElementById('retry-btn').addEventListener('click', tryReconnect);
+          document.getElementById('retry-btn').addEventListener('click', () => {
+            showConnectionError(false);
+            initUser();
+          });
           
           // Секретная кнопка админа
           document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
@@ -1186,6 +1160,8 @@
               showAdminLogin();
             }
           });
+
+          initUser();
         }, 500);
       }, 1500);
     }
