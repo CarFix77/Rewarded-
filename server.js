@@ -8,7 +8,13 @@ const CONFIG = {
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223"
+  ADMIN_PASSWORD: "8223Nn8223",
+  TASK_REWARDS: {
+    FOLLOW: 0.10,
+    LIKE: 0.05,
+    RETWEET: 0.07,
+    COMMENT: 0.15
+  }
 };
 
 const kv = await Deno.openKv();
@@ -25,18 +31,24 @@ function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Получение данных пользователя
+// Получение информации о пользователе
 router.get("/user/:userId", async (ctx) => {
   const userId = ctx.params.userId;
   const user = (await kv.get(["users", userId])).value;
-
+  
   if (!user) {
     ctx.response.status = 404;
     ctx.response.body = { error: "User not found" };
     return;
   }
-
-  ctx.response.body = user;
+  
+  // Добавляем completedTasks если их нет
+  const userWithTasks = {
+    ...user,
+    completedTasks: user.completedTasks || []
+  };
+  
+  ctx.response.body = userWithTasks;
 });
 
 // Получение статистики просмотров
@@ -58,13 +70,14 @@ router.post("/register", async (ctx) => {
     refCode: userRefCode,
     refCount: 0,
     refEarnings: 0,
+    completedTasks: [],
     createdAt: new Date().toISOString()
   });
 
   // Реферальный бонус
   if (refCode) {
     for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.refCode == refCode) {
+      if (entry.value.refCode === refCode) {
         const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
         await kv.set(entry.key, {
           ...entry.value,
@@ -89,7 +102,7 @@ router.get("/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
 
-  // Проверка секрета (принимаем оба ключа)
+  // Проверка секрета
   if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
     ctx.response.status = 401;
     ctx.response.body = { error: "Invalid secret" };
@@ -148,46 +161,92 @@ router.post("/withdraw", async (ctx) => {
 
 // Задания
 router.get("/tasks", async (ctx) => {
-  const tasks = [];
-  for await (const entry of kv.list({ prefix: ["tasks"] })) {
-    tasks.push(entry.value);
-  }
+  // Стандартные задания
+  const tasks = [
+    {
+      id: "follow_twitter",
+      title: "Подписаться на Twitter",
+      description: "Подпишитесь на наш Twitter аккаунт и получите награду",
+      reward: CONFIG.TASK_REWARDS.FOLLOW,
+      url: "https://twitter.com",
+      cooldown: 10
+    },
+    {
+      id: "like_tweet",
+      title: "Лайкнуть твит",
+      description: "Поставьте лайк на наш последний твит",
+      reward: CONFIG.TASK_REWARDS.LIKE,
+      url: "https://twitter.com/tweet",
+      cooldown: 10
+    },
+    {
+      id: "retweet",
+      title: "Ретвитнуть",
+      description: "Сделайте ретвит нашего сообщения",
+      reward: CONFIG.TASK_REWARDS.RETWEET,
+      url: "https://twitter.com/retweet",
+      cooldown: 15
+    },
+    {
+      id: "comment",
+      title: "Оставить комментарий",
+      description: "Оставьте комментарий под нашим постом",
+      reward: CONFIG.TASK_REWARDS.COMMENT,
+      url: "https://twitter.com/comment",
+      cooldown: 20
+    }
+  ];
+
   ctx.response.body = tasks;
 });
 
+// Завершение задания
 router.post("/user/:userId/complete-task", async (ctx) => {
-  const { taskId } = await ctx.request.body().value;
   const userId = ctx.params.userId;
+  const { taskId } = await ctx.request.body().value;
+  
   const user = (await kv.get(["users", userId])).value;
-  const task = (await kv.get(["tasks", taskId])).value;
-
-  if (!user || !task) {
+  
+  if (!user) {
     ctx.response.status = 404;
-    ctx.response.body = { error: "Not found" };
+    ctx.response.body = { error: "User not found" };
     return;
   }
-
+  
   const completedTasks = user.completedTasks || [];
   if (completedTasks.includes(taskId)) {
-    ctx.response.body = { 
-      balance: user.balance,
-      completedTasks
-    };
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Task already completed" };
     return;
   }
-
+  
+  // Находим задание
+  const tasks = [
+    { id: "follow_twitter", reward: CONFIG.TASK_REWARDS.FOLLOW },
+    { id: "like_tweet", reward: CONFIG.TASK_REWARDS.LIKE },
+    { id: "retweet", reward: CONFIG.TASK_REWARDS.RETWEET },
+    { id: "comment", reward: CONFIG.TASK_REWARDS.COMMENT }
+  ];
+  
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) {
+    ctx.response.status = 404;
+    ctx.response.body = { error: "Task not found" };
+    return;
+  }
+  
   const newBalance = user.balance + task.reward;
-  completedTasks.push(taskId);
-
+  const newCompletedTasks = [...completedTasks, taskId];
+  
   await kv.set(["users", userId], {
     ...user,
     balance: newBalance,
-    completedTasks
+    completedTasks: newCompletedTasks
   });
-
-  ctx.response.body = { 
+  
+  ctx.response.body = {
     balance: newBalance,
-    completedTasks
+    completedTasks: newCompletedTasks
   };
 });
 
@@ -232,19 +291,50 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
   ctx.response.body = { success: true };
 });
 
+// Управление заданиями (админ)
 router.get("/admin/tasks", async (ctx) => {
-  const tasks = [];
-  for await (const entry of kv.list({ prefix: ["tasks"] })) {
-    tasks.push(entry.value);
+  // Возвращаем стандартные задания + кастомные из KV
+  const customTasks = [];
+  for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
+    customTasks.push(entry.value);
   }
+  
+  const tasks = [
+    {
+      id: "follow_twitter",
+      title: "Подписаться на Twitter",
+      reward: CONFIG.TASK_REWARDS.FOLLOW,
+      cooldown: 10
+    },
+    {
+      id: "like_tweet",
+      title: "Лайкнуть твит",
+      reward: CONFIG.TASK_REWARDS.LIKE,
+      cooldown: 10
+    },
+    {
+      id: "retweet",
+      title: "Ретвитнуть",
+      reward: CONFIG.TASK_REWARDS.RETWEET,
+      cooldown: 15
+    },
+    {
+      id: "comment",
+      title: "Оставить комментарий",
+      reward: CONFIG.TASK_REWARDS.COMMENT,
+      cooldown: 20
+    },
+    ...customTasks
+  ];
+  
   ctx.response.body = tasks;
 });
 
 router.post("/admin/tasks", async (ctx) => {
   const { title, reward, description, url, cooldown } = await ctx.request.body().value;
-  const taskId = `task_${generateId()}`;
-
-  await kv.set(["tasks", taskId], {
+  const taskId = `custom_${generateId()}`;
+  
+  await kv.set(["custom_tasks", taskId], {
     id: taskId,
     title,
     reward: parseFloat(reward),
@@ -253,12 +343,12 @@ router.post("/admin/tasks", async (ctx) => {
     cooldown: parseInt(cooldown) || 10,
     createdAt: new Date().toISOString()
   });
-
+  
   ctx.response.body = { id: taskId };
 });
 
 router.delete("/admin/tasks/:id", async (ctx) => {
-  await kv.delete(["tasks", ctx.params.id]);
+  await kv.delete(["custom_tasks", ctx.params.id]);
   ctx.response.body = { success: true };
 });
 
@@ -270,7 +360,9 @@ router.get("/", (ctx) => {
       register: "POST /register",
       reward: "/reward?userid=USERID&secret=wagner46375",
       withdraw: "POST /withdraw",
-      admin: "/admin/login"
+      admin: "/admin/login",
+      tasks: "GET /tasks",
+      completeTask: "POST /user/:userId/complete-task"
     }
   };
 });
