@@ -1,263 +1,66 @@
 import { Application, Router } from "https://deno.land/x/oak/mod.ts";
 import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
-const CONFIG = {
-  REWARD_PER_AD: 0.0003,
-  SECRET_KEY: "wagner46375",
-  WEBHOOK_SECRET: "wagner1080",
-  DAILY_LIMIT: 30,
-  MIN_WITHDRAW: 1.00,
-  REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223",
-  TASK_REWARDS: {
-    FOLLOW: 0.10,
-    LIKE: 0.05,
-    VIEW_POST: 0.0001, // Изменено с RETWEET
-    COMMENT: 0.15
-  }
-};
-
-const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
-
 app.use(oakCors({ origin: "*" }));
-app.use(router.routes());
-app.use(router.allowedMethods());
 
-function generateId() {
-  return Math.floor(100000 + Math.random() * 900000);
-}
+// Конфиг
+const CONFIG = {
+  REWARD_URL: "https://test.adsgram.ai/reward?userid=[userId]", // Ваш внешний URL
+  SECRET: "wagner46375",
+  REWARD_AMOUNT: 0.0003,
+  DAILY_LIMIT: 30
+};
 
-// Регистрация пользователя
-router.post("/register", async (ctx) => {
-  const { refCode, telegramId } = await ctx.request.body().value;
-  const userId = `user_${generateId()}`;
-  const userRefCode = generateId().toString();
+const adViews = new Map(); // Хранилище просмотров
 
-  await kv.set(["users", userId], {
-    balance: 0,
-    telegramId: telegramId || null,
-    refCode: userRefCode,
-    refCount: 0,
-    refEarnings: 0,
-    completedTasks: [],
-    createdAt: new Date().toISOString()
-  });
-
-  if (refCode) {
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.refCode === refCode) {
-        const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-        await kv.set(entry.key, {
-          ...entry.value,
-          refCount: entry.value.refCount + 1,
-          refEarnings: entry.value.refEarnings + bonus,
-          balance: entry.value.balance + bonus
-        });
-        break;
-      }
-    }
-  }
-
-  ctx.response.body = {
-    userId,
-    refCode: userRefCode,
-    refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
-  };
-});
-
-// Получение информации о пользователе
-router.get("/user/:userId", async (ctx) => {
-  const user = (await kv.get(["users", ctx.params.userId])).value;
-  if (!user) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "User not found" };
-    return;
-  }
-  ctx.response.body = {
-    ...user,
-    completedTasks: user.completedTasks || []
-  };
-});
-
-// Просмотр рекламы
+// Обработка рекламы
 router.get("/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
 
-  if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
+  // Проверка ключа
+  if (secret !== CONFIG.SECRET) {
     ctx.response.status = 401;
     ctx.response.body = { error: "Invalid secret" };
     return;
   }
 
+  // Проверка лимита
   const today = new Date().toISOString().split("T")[0];
-  const user = (await kv.get(["users", userId])).value || { balance: 0 };
-  const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+  const key = `${userId}_${today}`;
+  const todayViews = adViews.get(key) || 0;
 
-  if (dailyViews >= CONFIG.DAILY_LIMIT) {
+  if (todayViews >= CONFIG.DAILY_LIMIT) {
     ctx.response.status = 429;
     ctx.response.body = { error: "Daily limit reached" };
     return;
   }
 
-  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-  await kv.atomic()
-    .set(["users", userId], { ...user, balance: newBalance })
-    .set(["views", userId, today], dailyViews + 1)
-    .commit();
-
-  ctx.response.body = {
-    success: true,
-    reward: CONFIG.REWARD_PER_AD,
-    balance: newBalance,
-    viewsToday: dailyViews + 1
-  };
-});
-
-// Вывод средств
-router.post("/withdraw", async (ctx) => {
-  const { userId, wallet, amount } = await ctx.request.body().value;
-  const user = (await kv.get(["users", userId])).value;
-
-  if (!user || amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid withdrawal" };
-    return;
-  }
-
-  const withdrawId = `wd_${generateId()}`;
-  await kv.atomic()
-    .set(["users", userId], { ...user, balance: user.balance - amount })
-    .set(["withdrawals", withdrawId], {
-      userId,
-      amount,
-      wallet,
-      date: new Date().toISOString(),
-      status: "pending"
-    })
-    .commit();
-
-  ctx.response.body = { success: true, withdrawId };
-});
-
-// Задания
-router.get("/tasks", async (ctx) => {
-  const tasks = [
-    {
-      id: "follow_twitter",
-      title: "Подписаться на Twitter",
-      description: "Подпишитесь на наш Twitter аккаунт и получите награду",
-      reward: CONFIG.TASK_REWARDS.FOLLOW,
-      url: "https://twitter.com",
-      cooldown: 10
-    },
-    {
-      id: "like_tweet",
-      title: "Лайкнуть твит",
-      description: "Поставьте лайк на наш последний твит",
-      reward: CONFIG.TASK_REWARDS.LIKE,
-      url: "https://twitter.com/tweet",
-      cooldown: 10
-    },
-    {
-      id: "view_post",
-      title: "Просмотреть пост",
-      description: "Просмотрите наш пост в течение 30 секунд",
-      reward: CONFIG.TASK_REWARDS.VIEW_POST,
-      url: "https://twitter.com/post",
-      cooldown: 30
-    },
-    {
-      id: "comment",
-      title: "Оставить комментарий",
-      description: "Оставьте комментарий под нашим постом",
-      reward: CONFIG.TASK_REWARDS.COMMENT,
-      url: "https://twitter.com/comment",
-      cooldown: 20
+  // Отправляем запрос на внешний Reward URL
+  try {
+    const rewardUrl = CONFIG.REWARD_URL.replace("[userId]", userId);
+    const rewardResponse = await fetch(rewardUrl);
+    
+    if (!rewardResponse.ok) {
+      throw new Error("Ошибка внешнего Reward URL");
     }
-  ];
 
-  ctx.response.body = tasks;
-});
-
-// Завершение задания
-router.post("/user/:userId/complete-task", async (ctx) => {
-  const userId = ctx.params.userId;
-  const { taskId } = await ctx.request.body().value;
-  const user = (await kv.get(["users", userId])).value;
-  
-  if (!user) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "User not found" };
-    return;
-  }
-  
-  const completedTasks = user.completedTasks || [];
-  if (completedTasks.includes(taskId)) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Task already completed" };
-    return;
-  }
-  
-  const tasks = [
-    { id: "follow_twitter", reward: CONFIG.TASK_REWARDS.FOLLOW },
-    { id: "like_tweet", reward: CONFIG.TASK_REWARDS.LIKE },
-    { id: "view_post", reward: CONFIG.TASK_REWARDS.VIEW_POST },
-    { id: "comment", reward: CONFIG.TASK_REWARDS.COMMENT }
-  ];
-  
-  const task = tasks.find(t => t.id === taskId);
-  if (!task) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "Task not found" };
-    return;
-  }
-  
-  const newBalance = user.balance + task.reward;
-  const newCompletedTasks = [...completedTasks, taskId];
-  
-  await kv.set(["users", userId], {
-    ...user,
-    balance: newBalance,
-    completedTasks: newCompletedTasks
-  });
-  
-  ctx.response.body = {
-    balance: newBalance,
-    completedTasks: newCompletedTasks
-  };
-});
-
-// Админ-панель
-router.post("/admin/login", async (ctx) => {
-  const { password } = await ctx.request.body().value;
-  if (password === CONFIG.ADMIN_PASSWORD) {
-    ctx.response.body = { 
-      success: true, 
-      token: "admin_" + generateId() 
+    // Записываем просмотр
+    adViews.set(key, todayViews + 1);
+    
+    ctx.response.body = {
+      success: true,
+      reward: CONFIG.REWARD_AMOUNT,
+      viewsToday: todayViews + 1
     };
-  } else {
-    ctx.response.status = 401;
-    ctx.response.body = { error: "Wrong password" };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Reward service error" };
   }
 });
 
-// Статус сервера
-router.get("/", (ctx) => {
-  ctx.response.body = {
-    status: "OK",
-    endpoints: {
-      register: "POST /register",
-      reward: "/reward?userid=USERID&secret=wagner46375",
-      withdraw: "POST /withdraw",
-      admin: "/admin/login",
-      tasks: "GET /tasks",
-      completeTask: "POST /user/:userId/complete-task"
-    }
-  };
-});
-
+app.use(router.routes());
 await app.listen({ port: 8000 });
-console.log("Server running on http://localhost:8000");
+console.log("Сервер запущен: http://localhost:8000");
