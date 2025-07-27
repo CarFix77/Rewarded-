@@ -558,7 +558,7 @@
 
   <script>
     const CONFIG = {
-      apiUrl: "https://carfix77-rewarded-34-46pqhwvzmzmw.deno.dev",
+      apiUrl: "https://carfix77-rewarded-34.deno.dev",
       rewardPerAd: 0.0003,
       secretKey: "wagner46375",
       dailyLimit: 30,
@@ -616,13 +616,11 @@
 
     async function loadUserData() {
       try {
-        // Загружаем данные пользователя
         const userResponse = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
         if (!userResponse.ok) throw new Error('Ошибка загрузки данных пользователя');
         
         const userData = await userResponse.json();
         
-        // Загружаем статистику просмотров за сегодня
         const today = new Date().toISOString().split('T')[0];
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
         const statsData = await statsResponse.json();
