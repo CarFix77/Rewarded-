@@ -369,4 +369,4 @@ router.get("/", (ctx) => {
 
 // Запуск сервера
 await app.listen({ port: 8000 });
-console.log("Server running on http://localhost:8000");
+console.log("Server running on https://carfix77-rewarded-34-46pqhwvzmzmw.deno.dev/");
