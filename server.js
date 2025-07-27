@@ -10,10 +10,10 @@ const CONFIG = {
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
   TASK_REWARDS: {
-    FOLLOW: 0.0009,
-    LIKE: 0.0001,
-    RETWEET: 0.07,
-    COMMENT: 0.01
+    FOLLOW: 0.10,
+    LIKE: 0.05,
+    VIEW_POST: 0.0001, // Изменено с RETWEET
+    COMMENT: 0.15
   }
 };
 
@@ -21,42 +21,13 @@ const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
-// Настройка CORS
 app.use(oakCors({ origin: "*" }));
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-// Генерация ID
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
-
-// Получение информации о пользователе
-router.get("/user/:userId", async (ctx) => {
-  const userId = ctx.params.userId;
-  const user = (await kv.get(["users", userId])).value;
-  
-  if (!user) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "User not found" };
-    return;
-  }
-  
-  // Добавляем completedTasks если их нет
-  const userWithTasks = {
-    ...user,
-    completedTasks: user.completedTasks || []
-  };
-  
-  ctx.response.body = userWithTasks;
-});
-
-// Получение статистики просмотров
-router.get("/views/:userId/:date", async (ctx) => {
-  const { userId, date } = ctx.params;
-  const views = (await kv.get(["views", userId, date])).value || 0;
-  ctx.response.body = views;
-});
 
 // Регистрация пользователя
 router.post("/register", async (ctx) => {
@@ -74,7 +45,6 @@ router.post("/register", async (ctx) => {
     createdAt: new Date().toISOString()
   });
 
-  // Реферальный бонус
   if (refCode) {
     for await (const entry of kv.list({ prefix: ["users"] })) {
       if (entry.value.refCode === refCode) {
@@ -97,12 +67,25 @@ router.post("/register", async (ctx) => {
   };
 });
 
-// Reward Webhook
+// Получение информации о пользователе
+router.get("/user/:userId", async (ctx) => {
+  const user = (await kv.get(["users", ctx.params.userId])).value;
+  if (!user) {
+    ctx.response.status = 404;
+    ctx.response.body = { error: "User not found" };
+    return;
+  }
+  ctx.response.body = {
+    ...user,
+    completedTasks: user.completedTasks || []
+  };
+});
+
+// Просмотр рекламы
 router.get("/reward", async (ctx) => {
   const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
 
-  // Проверка секрета
   if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
     ctx.response.status = 401;
     ctx.response.body = { error: "Invalid secret" };
@@ -161,7 +144,6 @@ router.post("/withdraw", async (ctx) => {
 
 // Задания
 router.get("/tasks", async (ctx) => {
-  // Стандартные задания
   const tasks = [
     {
       id: "follow_twitter",
@@ -180,12 +162,12 @@ router.get("/tasks", async (ctx) => {
       cooldown: 10
     },
     {
-      id: "retweet",
-      title: "Ретвитнуть",
-      description: "Сделайте ретвит нашего сообщения",
-      reward: CONFIG.TASK_REWARDS.RETWEET,
-      url: "https://twitter.com/retweet",
-      cooldown: 15
+      id: "view_post",
+      title: "Просмотреть пост",
+      description: "Просмотрите наш пост в течение 30 секунд",
+      reward: CONFIG.TASK_REWARDS.VIEW_POST,
+      url: "https://twitter.com/post",
+      cooldown: 30
     },
     {
       id: "comment",
@@ -204,7 +186,6 @@ router.get("/tasks", async (ctx) => {
 router.post("/user/:userId/complete-task", async (ctx) => {
   const userId = ctx.params.userId;
   const { taskId } = await ctx.request.body().value;
-  
   const user = (await kv.get(["users", userId])).value;
   
   if (!user) {
@@ -220,11 +201,10 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     return;
   }
   
-  // Находим задание
   const tasks = [
     { id: "follow_twitter", reward: CONFIG.TASK_REWARDS.FOLLOW },
     { id: "like_tweet", reward: CONFIG.TASK_REWARDS.LIKE },
-    { id: "retweet", reward: CONFIG.TASK_REWARDS.RETWEET },
+    { id: "view_post", reward: CONFIG.TASK_REWARDS.VIEW_POST },
     { id: "comment", reward: CONFIG.TASK_REWARDS.COMMENT }
   ];
   
@@ -264,94 +244,6 @@ router.post("/admin/login", async (ctx) => {
   }
 });
 
-router.get("/admin/withdrawals", async (ctx) => {
-  const withdrawals = [];
-  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-    withdrawals.push(entry.value);
-  }
-  ctx.response.body = withdrawals;
-});
-
-router.post("/admin/withdrawals/:id", async (ctx) => {
-  const { status } = await ctx.request.body().value;
-  const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
-
-  if (!withdrawal) {
-    ctx.response.status = 404;
-    ctx.response.body = { error: "Not found" };
-    return;
-  }
-
-  await kv.set(["withdrawals", ctx.params.id], {
-    ...withdrawal,
-    status,
-    processedAt: new Date().toISOString()
-  });
-
-  ctx.response.body = { success: true };
-});
-
-// Управление заданиями (админ)
-router.get("/admin/tasks", async (ctx) => {
-  // Возвращаем стандартные задания + кастомные из KV
-  const customTasks = [];
-  for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
-    customTasks.push(entry.value);
-  }
-  
-  const tasks = [
-    {
-      id: "follow_twitter",
-      title: "Подписаться на Twitter",
-      reward: CONFIG.TASK_REWARDS.FOLLOW,
-      cooldown: 10
-    },
-    {
-      id: "like_tweet",
-      title: "Лайкнуть твит",
-      reward: CONFIG.TASK_REWARDS.LIKE,
-      cooldown: 10
-    },
-    {
-      id: "retweet",
-      title: "Ретвитнуть",
-      reward: CONFIG.TASK_REWARDS.RETWEET,
-      cooldown: 15
-    },
-    {
-      id: "comment",
-      title: "Оставить комментарий",
-      reward: CONFIG.TASK_REWARDS.COMMENT,
-      cooldown: 20
-    },
-    ...customTasks
-  ];
-  
-  ctx.response.body = tasks;
-});
-
-router.post("/admin/tasks", async (ctx) => {
-  const { title, reward, description, url, cooldown } = await ctx.request.body().value;
-  const taskId = `custom_${generateId()}`;
-  
-  await kv.set(["custom_tasks", taskId], {
-    id: taskId,
-    title,
-    reward: parseFloat(reward),
-    description,
-    url,
-    cooldown: parseInt(cooldown) || 10,
-    createdAt: new Date().toISOString()
-  });
-  
-  ctx.response.body = { id: taskId };
-});
-
-router.delete("/admin/tasks/:id", async (ctx) => {
-  await kv.delete(["custom_tasks", ctx.params.id]);
-  ctx.response.body = { success: true };
-});
-
 // Статус сервера
 router.get("/", (ctx) => {
   ctx.response.body = {
@@ -367,6 +259,5 @@ router.get("/", (ctx) => {
   };
 });
 
-// Запуск сервера
 await app.listen({ port: 8000 });
-console.log("Server running on https://carfix77-rewarded-34-46pqhwvzmzmw.deno.dev/");
+console.log("Server running on http://localhost:8000");
