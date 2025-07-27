@@ -1,229 +1,280 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const url = require('url');
+import { Application, Router } from "https://deno.land/x/oak/mod.ts";
+import { oakCors } from "https://deno.land/x/cors/mod.ts";
 
-// Конфигурация
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
+  WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223",
-  DB_FILE: path.join(__dirname, 'db.json')
+  ADMIN_PASSWORD: "8223Nn8223"
 };
 
-// Инициализация "базы данных"
-let db = {
-  users: {},
-  views: {},
-  withdrawals: {},
-  tasks: []
-};
+const kv = await Deno.openKv();
+const app = new Application();
+const router = new Router();
 
-// Загрузка БД из файла
-function loadDB() {
-  try {
-    if (fs.existsSync(CONFIG.DB_FILE)) {
-      db = JSON.parse(fs.readFileSync(CONFIG.DB_FILE, 'utf-8'));
-    }
-  } catch (e) {
-    console.error('Ошибка загрузки БД:', e);
-  }
-}
-
-// Сохранение БД в файл
-function saveDB() {
-  fs.writeFileSync(CONFIG.DB_FILE, JSON.stringify(db, null, 2));
-}
+// Настройка CORS
+app.use(oakCors({ origin: "*" }));
+app.use(router.routes());
+app.use(router.allowedMethods());
 
 // Генерация ID
 function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+  return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Сервер
-const server = http.createServer(async (req, res) => {
-  const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname;
-  
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+// Получение данных пользователя
+router.get("/user/:userId", async (ctx) => {
+  const userId = ctx.params.userId;
+  const user = (await kv.get(["users", userId])).value;
 
-  // Обслуживание статики
-  if (pathname === '/' || pathname.startsWith('/static')) {
-    return serveStatic(req, res);
+  if (!user) {
+    ctx.response.status = 404;
+    ctx.response.body = { error: "User not found" };
+    return;
   }
 
-  // API endpoints
-  if (req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
-      try {
-        const data = body ? JSON.parse(body) : {};
-        handleAPI(req, res, pathname, data, parsedUrl.query);
-      } catch (e) {
-        sendResponse(res, 400, { error: 'Invalid JSON' });
-      }
-    });
-  } else {
-    handleAPI(req, res, pathname, {}, parsedUrl.query);
-  }
+  ctx.response.body = user;
 });
 
-// Обработка API
-function handleAPI(req, res, pathname, data, query) {
-  try {
-    switch (pathname) {
-      case '/register':
-        handleRegister(res, data);
-        break;
-      case '/reward':
-        handleReward(res, query);
-        break;
-      case '/withdraw':
-        handleWithdraw(res, data);
-        break;
-      case '/admin/login':
-        handleAdminLogin(res, data);
-        break;
-      default:
-        sendResponse(res, 404, { error: 'Not found' });
-    }
-  } catch (e) {
-    sendResponse(res, 500, { error: 'Server error' });
-  }
-}
+// Получение статистики просмотров
+router.get("/views/:userId/:date", async (ctx) => {
+  const { userId, date } = ctx.params;
+  const views = (await kv.get(["views", userId, date])).value || 0;
+  ctx.response.body = views;
+});
 
 // Регистрация пользователя
-function handleRegister(res, { refCode }) {
-  const userId = 'user_' + generateId();
-  const userRefCode = generateId();
+router.post("/register", async (ctx) => {
+  const { refCode, telegramId } = await ctx.request.body().value;
+  const userId = `user_${generateId()}`;
+  const userRefCode = generateId().toString();
 
-  db.users[userId] = {
+  await kv.set(["users", userId], {
     balance: 0,
+    telegramId: telegramId || null,
     refCode: userRefCode,
     refCount: 0,
     refEarnings: 0,
     createdAt: new Date().toISOString()
-  };
+  });
 
-  // Реферальная система
+  // Реферальный бонус
   if (refCode) {
-    const referrer = Object.values(db.users).find(u => u.refCode === refCode);
-    if (referrer) {
-      const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-      referrer.refCount++;
-      referrer.refEarnings += bonus;
-      referrer.balance += bonus;
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      if (entry.value.refCode == refCode) {
+        const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
+        await kv.set(entry.key, {
+          ...entry.value,
+          refCount: entry.value.refCount + 1,
+          refEarnings: entry.value.refEarnings + bonus,
+          balance: entry.value.balance + bonus
+        });
+        break;
+      }
     }
   }
 
-  saveDB();
-  sendResponse(res, 200, { userId, refCode: userRefCode });
-}
+  ctx.response.body = {
+    userId,
+    refCode: userRefCode,
+    refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
+  };
+});
 
-// Награда за просмотр
-function handleReward(res, { userid, secret }) {
-  if (secret !== CONFIG.SECRET_KEY) {
-    return sendResponse(res, 401, { error: 'Invalid secret' });
+// Reward Webhook
+router.get("/reward", async (ctx) => {
+  const userId = ctx.request.url.searchParams.get("userid");
+  const secret = ctx.request.url.searchParams.get("secret");
+
+  // Проверка секрета (принимаем оба ключа)
+  if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
+    ctx.response.status = 401;
+    ctx.response.body = { error: "Invalid secret" };
+    return;
   }
 
-  const today = new Date().toISOString().split('T')[0];
-  const user = db.users[userid] || { balance: 0 };
-  const viewsToday = db.views[`${userid}_${today}`] || 0;
+  const today = new Date().toISOString().split("T")[0];
+  const user = (await kv.get(["users", userId])).value || { balance: 0 };
+  const dailyViews = (await kv.get(["views", userId, today])).value || 0;
 
-  if (viewsToday >= CONFIG.DAILY_LIMIT) {
-    return sendResponse(res, 429, { error: 'Daily limit reached' });
+  if (dailyViews >= CONFIG.DAILY_LIMIT) {
+    ctx.response.status = 429;
+    ctx.response.body = { error: "Daily limit reached" };
+    return;
   }
 
-  user.balance += CONFIG.REWARD_PER_AD;
-  db.views[`${userid}_${today}`] = viewsToday + 1;
-  db.users[userid] = user;
+  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+  await kv.atomic()
+    .set(["users", userId], { ...user, balance: newBalance })
+    .set(["views", userId, today], dailyViews + 1)
+    .commit();
 
-  saveDB();
-  sendResponse(res, 200, {
+  ctx.response.body = {
+    success: true,
     reward: CONFIG.REWARD_PER_AD,
-    balance: user.balance,
-    viewsToday: viewsToday + 1
-  });
-}
+    balance: newBalance,
+    viewsToday: dailyViews + 1
+  };
+});
 
 // Вывод средств
-function handleWithdraw(res, { userId, wallet, amount }) {
-  const user = db.users[userId];
-  
+router.post("/withdraw", async (ctx) => {
+  const { userId, wallet, amount } = await ctx.request.body().value;
+  const user = (await kv.get(["users", userId])).value;
+
   if (!user || amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-    return sendResponse(res, 400, { error: 'Invalid withdrawal' });
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid withdrawal" };
+    return;
   }
 
-  const withdrawId = 'wd_' + generateId();
-  user.balance -= amount;
-  db.withdrawals[withdrawId] = {
-    userId,
-    amount,
-    wallet,
-    date: new Date().toISOString(),
-    status: 'pending'
-  };
+  const withdrawId = `wd_${generateId()}`;
+  await kv.atomic()
+    .set(["users", userId], { ...user, balance: user.balance - amount })
+    .set(["withdrawals", withdrawId], {
+      userId,
+      amount,
+      wallet,
+      date: new Date().toISOString(),
+      status: "pending"
+    })
+    .commit();
 
-  saveDB();
-  sendResponse(res, 200, { withdrawId });
-}
+  ctx.response.body = { success: true, withdrawId };
+});
 
-// Админ-авторизация
-function handleAdminLogin(res, { password }) {
-  if (password === CONFIG.ADMIN_PASSWORD) {
-    sendResponse(res, 200, { token: 'admin_' + generateId() });
-  } else {
-    sendResponse(res, 401, { error: 'Wrong password' });
+// Задания
+router.get("/tasks", async (ctx) => {
+  const tasks = [];
+  for await (const entry of kv.list({ prefix: ["tasks"] })) {
+    tasks.push(entry.value);
   }
-}
+  ctx.response.body = tasks;
+});
 
-// Отправка статических файлов
-function serveStatic(req, res) {
-  let filePath = path.join(__dirname, 'public', 
-    req.url === '/' ? 'index.html' : req.url);
+router.post("/user/:userId/complete-task", async (ctx) => {
+  const { taskId } = await ctx.request.body().value;
+  const userId = ctx.params.userId;
+  const user = (await kv.get(["users", userId])).value;
+  const task = (await kv.get(["tasks", taskId])).value;
 
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      if (err.code === 'ENOENT') {
-        fs.readFile(path.join(__dirname, 'public', 'index.html'), (err, content) => {
-          if (err) {
-            sendResponse(res, 404, 'Not found');
-          } else {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(content, 'utf-8');
-          }
-        });
-      } else {
-        sendResponse(res, 500, 'Server error');
-      }
-    } else {
-      const extname = path.extname(filePath);
-      let contentType = 'text/html';
+  if (!user || !task) {
+    ctx.response.status = 404;
+    ctx.response.body = { error: "Not found" };
+    return;
+  }
 
-      if (extname === '.js') contentType = 'text/javascript';
-      else if (extname === '.css') contentType = 'text/css';
+  const completedTasks = user.completedTasks || [];
+  if (completedTasks.includes(taskId)) {
+    ctx.response.body = { 
+      balance: user.balance,
+      completedTasks
+    };
+    return;
+  }
 
-      res.writeHead(200, { 'Content-Type': contentType });
-      res.end(content, 'utf-8');
-    }
+  const newBalance = user.balance + task.reward;
+  completedTasks.push(taskId);
+
+  await kv.set(["users", userId], {
+    ...user,
+    balance: newBalance,
+    completedTasks
   });
-}
 
-// Универсальный ответ
-function sendResponse(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(data));
-}
+  ctx.response.body = { 
+    balance: newBalance,
+    completedTasks
+  };
+});
+
+// Админ-панель
+router.post("/admin/login", async (ctx) => {
+  const { password } = await ctx.request.body().value;
+  if (password === CONFIG.ADMIN_PASSWORD) {
+    ctx.response.body = { 
+      success: true, 
+      token: "admin_" + generateId() 
+    };
+  } else {
+    ctx.response.status = 401;
+    ctx.response.body = { error: "Wrong password" };
+  }
+});
+
+router.get("/admin/withdrawals", async (ctx) => {
+  const withdrawals = [];
+  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+    withdrawals.push(entry.value);
+  }
+  ctx.response.body = withdrawals;
+});
+
+router.post("/admin/withdrawals/:id", async (ctx) => {
+  const { status } = await ctx.request.body().value;
+  const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
+
+  if (!withdrawal) {
+    ctx.response.status = 404;
+    ctx.response.body = { error: "Not found" };
+    return;
+  }
+
+  await kv.set(["withdrawals", ctx.params.id], {
+    ...withdrawal,
+    status,
+    processedAt: new Date().toISOString()
+  });
+
+  ctx.response.body = { success: true };
+});
+
+router.get("/admin/tasks", async (ctx) => {
+  const tasks = [];
+  for await (const entry of kv.list({ prefix: ["tasks"] })) {
+    tasks.push(entry.value);
+  }
+  ctx.response.body = tasks;
+});
+
+router.post("/admin/tasks", async (ctx) => {
+  const { title, reward, description, url, cooldown } = await ctx.request.body().value;
+  const taskId = `task_${generateId()}`;
+
+  await kv.set(["tasks", taskId], {
+    id: taskId,
+    title,
+    reward: parseFloat(reward),
+    description,
+    url,
+    cooldown: parseInt(cooldown) || 10,
+    createdAt: new Date().toISOString()
+  });
+
+  ctx.response.body = { id: taskId };
+});
+
+router.delete("/admin/tasks/:id", async (ctx) => {
+  await kv.delete(["tasks", ctx.params.id]);
+  ctx.response.body = { success: true };
+});
+
+// Статус сервера
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    status: "OK",
+    endpoints: {
+      register: "POST /register",
+      reward: "/reward?userid=USERID&secret=wagner46375",
+      withdraw: "POST /withdraw",
+      admin: "/admin/login"
+    }
+  };
+});
 
 // Запуск сервера
-loadDB();
-server.listen(8000, () => {
-  console.log(`Server running on http://localhost:8000`);
-});
+await app.listen({ port: 8000 });
+console.log("Server running on http://localhost:8000");
