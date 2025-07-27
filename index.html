@@ -28,11 +28,13 @@
       background-color: var(--bg-color);
       color: var(--text-color);
       line-height: 1.6;
+      padding: 0;
+      margin: 0;
     }
 
     .container {
       padding: 20px;
-      max-width: 500px;
+      max-width: 100%;
       margin: 0 auto;
     }
 
@@ -365,9 +367,44 @@
       padding: 20px;
       text-align: center;
     }
+
+    /* Telegram-specific styles */
+    .tg-header {
+      padding: 12px 16px;
+      background: var(--primary-color);
+      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .tg-back-btn {
+      background: none;
+      border: none;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .tg-main-btn {
+      background: var(--accent-color);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: bold;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
+  <!-- Telegram WebApp Header (автоматически скрывается в браузере) -->
+  <div id="tg-header" class="tg-header hidden">
+    <button id="tg-back-btn" class="tg-back-btn">← Назад</button>
+    <h3>AdRewards PRO</h3>
+    <div style="width: 24px;"></div> <!-- Для выравнивания -->
+  </div>
+
   <div id="splash-screen">
     <div class="splash-logo">💰</div>
     <div class="splash-text">AdRewards+</div>
@@ -557,6 +594,8 @@
   <button id="secret-admin-btn" title="Админ-панель"></button>
 
   <script>
+    // Telegram WebApp инициализация
+    const tg = window.Telegram?.WebApp;
     const CONFIG = {
       apiUrl: "https://carfix77-rewarded-34.deno.dev",
       rewardPerAd: 0.0003,
@@ -581,6 +620,22 @@
       connectionRetries: 0
     };
 
+    // Инициализация Telegram WebApp
+    function initTelegramApp() {
+      if (tg) {
+        tg.expand();
+        tg.enableClosingConfirmation();
+        document.getElementById('tg-header').classList.remove('hidden');
+        document.getElementById('tg-back-btn').addEventListener('click', () => {
+          if (document.querySelector('.page.active').id !== 'main-page') {
+            showPage('main-page');
+          } else {
+            tg.close();
+          }
+        });
+      }
+    }
+
     // Основные функции
     async function initUser() {
       try {
@@ -588,10 +643,18 @@
         
         if (!state.userId) {
           const refCode = new URLSearchParams(window.location.search).get('ref');
+          const initData = tg?.initData || '';
+          
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refCode })
+            headers: { 
+              'Content-Type': 'application/json',
+              'X-Telegram-Init-Data': initData
+            },
+            body: JSON.stringify({ 
+              refCode,
+              telegramId: tg?.initDataUnsafe?.user?.id 
+            })
           });
           
           if (!response.ok) {
@@ -611,6 +674,7 @@
       } catch (error) {
         console.error("Ошибка инициализации:", error);
         showConnectionError(true);
+        if (tg) tg.showAlert("Ошибка подключения к серверу: " + error.message);
       }
     }
 
@@ -798,7 +862,12 @@
         return;
       }
 
-      window.open(task.url, '_blank');
+      if (tg) {
+        tg.openLink(task.url, { try_instant_view: true });
+      } else {
+        window.open(task.url, '_blank');
+      }
+      
       showNotification(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
       
       setTimeout(async () => {
@@ -1051,7 +1120,6 @@
         state.tasks.push(newTask);
         renderAdminTasks();
         
-        // Очистка формы
         document.getElementById('new-task-title').value = '';
         document.getElementById('new-task-reward').value = '';
         document.getElementById('new-task-desc').value = '';
@@ -1124,6 +1192,7 @@
 
     function showError(message) {
       showNotification(message);
+      if (tg) tg.showAlert(message);
     }
 
     function showConnectionError(show) {
@@ -1142,6 +1211,8 @@
 
     // Инициализация приложения
     async function init() {
+      initTelegramApp();
+      
       setTimeout(() => {
         document.getElementById('splash-screen').style.opacity = '0';
         setTimeout(() => {
