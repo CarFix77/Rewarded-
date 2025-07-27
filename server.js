@@ -16,20 +16,18 @@ const CONFIG = {
 // Хранилище данных (в памяти)
 const userData = new Map();
 
-// Middleware для проверки секретного ключа
-router.use(async (ctx, next) => {
+// Обработчик рекламы
+router.get("/reward", async (ctx) => {
+  const userId = ctx.request.url.searchParams.get("userid");
   const secret = ctx.request.url.searchParams.get("secret");
+
+  // Проверка секретного ключа
   if (secret !== CONFIG.SECRET_KEY) {
     ctx.response.status = 401;
     ctx.response.body = { error: "Invalid secret key" };
     return;
   }
-  await next();
-});
 
-// Обработчик рекламы
-router.get("/reward", async (ctx) => {
-  const userId = ctx.request.url.searchParams.get("userid");
   const today = new Date().toISOString().split("T")[0];
   const userKey = `${userId}_${today}`;
 
@@ -67,7 +65,7 @@ router.get("/reward", async (ctx) => {
       success: true,
       reward: CONFIG.REWARD_AMOUNT,
       viewsToday: user.views,
-      balance: user.views * CONFIG.REWARD_AMOUNT
+      balance: (user.views * CONFIG.REWARD_AMOUNT).toFixed(6)
     };
 
   } catch (error) {
@@ -82,13 +80,12 @@ router.get("/reward", async (ctx) => {
 // Статус сервера
 router.get("/", (ctx) => {
   ctx.response.body = {
-    status: "OK",
+    status: "AdRewards PRO Server",
     endpoints: {
-      reward: "/reward?userid=USER_ID&secret=YOUR_SECRET"
+      reward: "/reward?userid=USER_ID&secret=wagner46375"
     }
   };
 });
 
 app.use(router.routes());
 await app.listen({ port: 8000 });
-console.log("Server running on http://localhost:8000");
