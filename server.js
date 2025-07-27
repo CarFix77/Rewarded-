@@ -1,5 +1,5 @@
-import { Application, Router } from "https://deno.land/x/oak/mod.js";
-import { oakCors } from "https://deno.land/x/cors/mod.js";
+import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
+import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -17,7 +17,6 @@ const CONFIG = {
   }
 };
 
-// Инициализация KV хранилища
 const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
@@ -42,42 +41,6 @@ app.use(router.allowedMethods());
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
-
-// Получение информации о пользователе
-router.get("/user/:userId", async (ctx) => {
-  try {
-    const userId = ctx.params.userId;
-    const user = (await kv.get(["users", userId])).value;
-    
-    if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "User not found" };
-      return;
-    }
-    
-    ctx.response.body = {
-      ...user,
-      completedTasks: user.completedTasks || []
-    };
-  } catch (error) {
-    console.error("Error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
-
-// Получение статистики просмотров
-router.get("/views/:userId/:date", async (ctx) => {
-  try {
-    const { userId, date } = ctx.params;
-    const views = (await kv.get(["views", userId, date])).value || 0;
-    ctx.response.body = views;
-  } catch (error) {
-    console.error("Error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
 
 // Регистрация пользователя
 router.post("/register", async (ctx) => {
@@ -116,6 +79,42 @@ router.post("/register", async (ctx) => {
       refCode: userRefCode,
       refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
     };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Получение информации о пользователе
+router.get("/user/:userId", async (ctx) => {
+  try {
+    const userId = ctx.params.userId;
+    const user = (await kv.get(["users", userId])).value;
+    
+    if (!user) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "User not found" };
+      return;
+    }
+    
+    ctx.response.body = {
+      ...user,
+      completedTasks: user.completedTasks || []
+    };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Получение статистики просмотров
+router.get("/views/:userId/:date", async (ctx) => {
+  try {
+    const { userId, date } = ctx.params;
+    const views = (await kv.get(["views", userId, date])).value || 0;
+    ctx.response.body = views;
   } catch (error) {
     console.error("Error:", error);
     ctx.response.status = 500;
@@ -178,7 +177,7 @@ router.post("/withdraw", async (ctx) => {
 
     if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
       ctx.response.status = 400;
-      ctx.response.body = { error: "Invalid withdrawal" };
+      ctx.response.body = { error: "Invalid withdrawal amount" };
       return;
     }
 
@@ -206,7 +205,7 @@ router.post("/withdraw", async (ctx) => {
 router.get("/tasks", async (ctx) => {
   try {
     // Стандартные задания
-    const tasks = [
+    const defaultTasks = [
       {
         id: "follow_twitter",
         title: "Подписаться на Twitter",
@@ -241,7 +240,13 @@ router.get("/tasks", async (ctx) => {
       }
     ];
 
-    ctx.response.body = tasks;
+    // Кастомные задания из KV
+    const customTasks = [];
+    for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
+      customTasks.push(entry.value);
+    }
+
+    ctx.response.body = [...defaultTasks, ...customTasks];
   } catch (error) {
     console.error("Error:", error);
     ctx.response.status = 500;
@@ -414,6 +419,7 @@ router.delete("/admin/tasks/:id", async (ctx) => {
 router.get("/", (ctx) => {
   ctx.response.body = {
     status: "OK",
+    version: "1.0",
     endpoints: {
       register: "POST /register",
       reward: "/reward?userid=USERID&secret=wagner46375",
