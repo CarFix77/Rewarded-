@@ -37,7 +37,7 @@ app.use(async (ctx, next) => {
   }
 });
 
-// Эндпоинт регистрации (POST)
+// Регистрация пользователя
 router.post("/register", async (ctx) => {
   try {
     const { refCode } = ctx.state.body || {};
@@ -83,23 +83,72 @@ router.post("/register", async (ctx) => {
   }
 });
 
-// Тестовый GET для проверки работы
-router.get("/register", (ctx) => {
+// Проверка здоровья сервера
+router.get("/health", (ctx) => {
   ctx.response.body = { 
+    status: "OK", 
+    version: "1.0",
+    timestamp: new Date().toISOString()
+  };
+});
+
+// Информация о регистрации
+router.get("/register", (ctx) => {
+  ctx.response.body = {
     message: "Use POST method to register",
     example: {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: { refCode: "optional_referral_code" }
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: {
+        refCode: "optional_referral_code"
+      }
     }
   };
 });
 
-// Health check
-router.get("/health", (ctx) => {
-  ctx.response.body = { status: "OK", timestamp: new Date().toISOString() };
+// Награда за просмотр
+router.get("/reward", async (ctx) => {
+  try {
+    const userId = ctx.request.url.searchParams.get("userid");
+    const secret = ctx.request.url.searchParams.get("secret");
+
+    if (secret !== CONFIG.SECRET_KEY) {
+      ctx.response.status = 401;
+      ctx.response.body = { error: "Invalid secret" };
+      return;
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    const user = (await kv.get(["users", userId])).value || { balance: 0 };
+    const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+
+    if (dailyViews >= CONFIG.DAILY_LIMIT) {
+      ctx.response.status = 429;
+      ctx.response.body = { error: "Daily limit reached" };
+      return;
+    }
+
+    const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+    await kv.atomic()
+      .set(["users", userId], { ...user, balance: newBalance })
+      .set(["views", userId, today], dailyViews + 1)
+      .commit();
+
+    ctx.response.body = {
+      success: true,
+      reward: CONFIG.REWARD_PER_AD,
+      balance: newBalance,
+      viewsToday: dailyViews + 1
+    };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Reward processing failed" };
+  }
 });
 
+// Подключение роутера
 app.use(router.routes());
 app.use(router.allowedMethods());
 
@@ -109,6 +158,7 @@ app.use((ctx) => {
   ctx.response.body = { error: "Endpoint not found" };
 });
 
-const port = parseInt(Deno.env.get("PORT") || 8000;
+// Запуск сервера
+const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 await app.listen({ port });
