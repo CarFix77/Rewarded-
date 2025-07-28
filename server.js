@@ -17,8 +17,8 @@ const router = new Router();
 // Настройка CORS
 app.use(oakCors({
   origin: "*",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"]
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 // Middleware для парсинга JSON
@@ -33,12 +33,23 @@ app.use(async (ctx, next) => {
     await next();
   } catch (err) {
     ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid request" };
+    ctx.response.body = { error: "Invalid request", details: err.message };
   }
 });
 
-// Регистрация пользователя
-router.post("/register", async (ctx) => {
+// Эндпоинты API
+
+// [GET] Проверка здоровья сервера
+router.get("/api/health", (ctx) => {
+  ctx.response.body = { 
+    status: "OK",
+    version: "1.0",
+    timestamp: new Date().toISOString()
+  };
+});
+
+// [POST] Регистрация пользователя
+router.post("/api/register", async (ctx) => {
   try {
     const { refCode } = ctx.state.body || {};
     
@@ -75,76 +86,33 @@ router.post("/register", async (ctx) => {
     ctx.response.body = {
       success: true,
       userId,
-      refCode: userRefCode
+      refCode: userRefCode,
+      balance: 0
     };
   } catch (error) {
     ctx.response.status = 500;
-    ctx.response.body = { error: "Registration failed" };
+    ctx.response.body = { 
+      error: "Registration failed",
+      details: error.message 
+    };
   }
 });
 
-// Проверка здоровья сервера
-router.get("/health", (ctx) => {
-  ctx.response.body = { 
-    status: "OK", 
-    version: "1.0",
-    timestamp: new Date().toISOString()
-  };
-});
-
-// Информация о регистрации
-router.get("/register", (ctx) => {
-  ctx.response.body = {
-    message: "Use POST method to register",
-    example: {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: {
-        refCode: "optional_referral_code"
-      }
-    }
-  };
-});
-
-// Награда за просмотр
-router.get("/reward", async (ctx) => {
+// [GET] Получение информации о пользователе
+router.get("/api/user/:userId", async (ctx) => {
   try {
-    const userId = ctx.request.url.searchParams.get("userid");
-    const secret = ctx.request.url.searchParams.get("secret");
-
-    if (secret !== CONFIG.SECRET_KEY) {
-      ctx.response.status = 401;
-      ctx.response.body = { error: "Invalid secret" };
+    const user = (await kv.get(["users", ctx.params.userId])).value;
+    
+    if (!user) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "User not found" };
       return;
     }
-
-    const today = new Date().toISOString().split("T")[0];
-    const user = (await kv.get(["users", userId])).value || { balance: 0 };
-    const dailyViews = (await kv.get(["views", userId, today])).value || 0;
-
-    if (dailyViews >= CONFIG.DAILY_LIMIT) {
-      ctx.response.status = 429;
-      ctx.response.body = { error: "Daily limit reached" };
-      return;
-    }
-
-    const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-    await kv.atomic()
-      .set(["users", userId], { ...user, balance: newBalance })
-      .set(["views", userId, today], dailyViews + 1)
-      .commit();
-
-    ctx.response.body = {
-      success: true,
-      reward: CONFIG.REWARD_PER_AD,
-      balance: newBalance,
-      viewsToday: dailyViews + 1
-    };
+    
+    ctx.response.body = user;
   } catch (error) {
     ctx.response.status = 500;
-    ctx.response.body = { error: "Reward processing failed" };
+    ctx.response.body = { error: "Server error" };
   }
 });
 
@@ -152,10 +120,17 @@ router.get("/reward", async (ctx) => {
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-// Обработка 404
+// Обработка 404 (должна быть после всех роутов)
 app.use((ctx) => {
   ctx.response.status = 404;
-  ctx.response.body = { error: "Endpoint not found" };
+  ctx.response.body = { 
+    error: "Endpoint not found",
+    availableEndpoints: [
+      "GET /api/health",
+      "POST /api/register",
+      "GET /api/user/:userId"
+    ]
+  };
 });
 
 // Запуск сервера
