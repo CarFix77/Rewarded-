@@ -4,10 +4,17 @@ import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
+  WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223"
+  ADMIN_PASSWORD: "8223Nn8223",
+  TASK_REWARDS: {
+    FOLLOW: 0.10,
+    LIKE: 0.05,
+    RETWEET: 0.07,
+    COMMENT: 0.15
+  }
 };
 
 const kv = await Deno.openKv();
@@ -21,53 +28,37 @@ app.use(oakCors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-// Middleware для парсинга JSON
+// Логирование запросов
 app.use(async (ctx, next) => {
-  try {
-    if (ctx.request.hasBody) {
-      const body = ctx.request.body();
-      if (body.type === "json") {
-        ctx.state.body = await body.value;
-      }
-    }
-    await next();
-  } catch (err) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid request", details: err.message };
-  }
+  console.log(`${ctx.request.method} ${ctx.request.url.pathname}`);
+  await next();
 });
 
-// Эндпоинты API
+app.use(router.routes());
+app.use(router.allowedMethods());
 
-// [GET] Проверка здоровья сервера
-router.get("/api/health", (ctx) => {
-  ctx.response.body = { 
-    status: "OK",
-    version: "1.0",
-    timestamp: new Date().toISOString()
-  };
-});
+// Генерация ID
+function generateId() {
+  return Math.floor(100000 + Math.random() * 900000);
+}
 
-// [POST] Регистрация пользователя
-router.post("/api/register", async (ctx) => {
+// Регистрация пользователя
+router.post("/register", async (ctx) => {
   try {
-    const { refCode } = ctx.state.body || {};
-    
-    const userId = `user_${Date.now()}`;
-    const userRefCode = `ref_${Math.floor(100000 + Math.random() * 900000)}`;
-    
-    const userData = {
-      userId,
+    const { refCode } = await ctx.request.body().value;
+    const userId = `user_${generateId()}`;
+    const userRefCode = generateId().toString();
+
+    await kv.set(["users", userId], {
       balance: 0,
       refCode: userRefCode,
       refCount: 0,
       refEarnings: 0,
+      completedTasks: [],
       createdAt: new Date().toISOString()
-    };
+    });
 
-    await kv.set(["users", userId], userData);
-
-    // Реферальная система
+    // Реферальный бонус
     if (refCode) {
       for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.refCode === refCode) {
@@ -84,24 +75,22 @@ router.post("/api/register", async (ctx) => {
     }
 
     ctx.response.body = {
-      success: true,
       userId,
       refCode: userRefCode,
-      balance: 0
+      refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
     };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { 
-      error: "Registration failed",
-      details: error.message 
-    };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// [GET] Получение информации о пользователе
-router.get("/api/user/:userId", async (ctx) => {
+// Получение информации о пользователе
+router.get("/user/:userId", async (ctx) => {
   try {
-    const user = (await kv.get(["users", ctx.params.userId])).value;
+    const userId = ctx.params.userId;
+    const user = (await kv.get(["users", userId])).value;
     
     if (!user) {
       ctx.response.status = 404;
@@ -109,28 +98,347 @@ router.get("/api/user/:userId", async (ctx) => {
       return;
     }
     
-    ctx.response.body = user;
+    ctx.response.body = {
+      ...user,
+      completedTasks: user.completedTasks || []
+    };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Server error" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Подключение роутера
-app.use(router.routes());
-app.use(router.allowedMethods());
+// Получение статистики просмотров
+router.get("/views/:userId/:date", async (ctx) => {
+  try {
+    const { userId, date } = ctx.params;
+    const views = (await kv.get(["views", userId, date])).value || 0;
+    ctx.response.body = views;
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
 
-// Обработка 404 (должна быть после всех роутов)
-app.use((ctx) => {
-  ctx.response.status = 404;
-  ctx.response.body = { 
-    error: "Endpoint not found",
-    availableEndpoints: [
-      "GET /api/health",
-      "POST /api/register",
-      "GET /api/user/:userId"
-    ]
+// Reward endpoint
+router.get("/reward", async (ctx) => {
+  try {
+    const userId = ctx.request.url.searchParams.get("userid");
+    const secret = ctx.request.url.searchParams.get("secret");
+
+    if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
+      ctx.response.status = 401;
+      ctx.response.body = { error: "Invalid secret" };
+      return;
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    const user = (await kv.get(["users", userId])).value || { balance: 0 };
+    const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+
+    if (dailyViews >= CONFIG.DAILY_LIMIT) {
+      ctx.response.status = 429;
+      ctx.response.body = { error: "Daily limit reached" };
+      return;
+    }
+
+    const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+    await kv.atomic()
+      .set(["users", userId], { ...user, balance: newBalance })
+      .set(["views", userId, today], dailyViews + 1)
+      .commit();
+
+    ctx.response.body = {
+      success: true,
+      reward: CONFIG.REWARD_PER_AD,
+      balance: newBalance,
+      viewsToday: dailyViews + 1
+    };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Вывод средств
+router.post("/withdraw", async (ctx) => {
+  try {
+    const { userId, wallet, amount } = await ctx.request.body().value;
+    const user = (await kv.get(["users", userId])).value;
+
+    if (!user) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "User not found" };
+      return;
+    }
+
+    if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid withdrawal amount" };
+      return;
+    }
+
+    const withdrawId = `wd_${generateId()}`;
+    await kv.atomic()
+      .set(["users", userId], { ...user, balance: user.balance - amount })
+      .set(["withdrawals", withdrawId], {
+        userId,
+        amount,
+        wallet,
+        date: new Date().toISOString(),
+        status: "pending"
+      })
+      .commit();
+
+    ctx.response.body = { success: true, withdrawId };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Задания
+router.get("/tasks", async (ctx) => {
+  try {
+    // Стандартные задания
+    const defaultTasks = [
+      {
+        id: "follow_twitter",
+        title: "Подписаться на Twitter",
+        description: "Подпишитесь на наш Twitter аккаунт и получите награду",
+        reward: CONFIG.TASK_REWARDS.FOLLOW,
+        url: "https://twitter.com",
+        cooldown: 10
+      },
+      {
+        id: "like_tweet",
+        title: "Лайкнуть твит",
+        description: "Поставьте лайк на наш последний твит",
+        reward: CONFIG.TASK_REWARDS.LIKE,
+        url: "https://twitter.com/tweet",
+        cooldown: 10
+      },
+      {
+        id: "retweet",
+        title: "Ретвитнуть",
+        description: "Сделайте ретвит нашего сообщения",
+        reward: CONFIG.TASK_REWARDS.RETWEET,
+        url: "https://twitter.com/retweet",
+        cooldown: 15
+      },
+      {
+        id: "comment",
+        title: "Оставить комментарий",
+        description: "Оставьте комментарий под нашим постом",
+        reward: CONFIG.TASK_REWARDS.COMMENT,
+        url: "https://twitter.com/comment",
+        cooldown: 20
+      }
+    ];
+
+    // Кастомные задания из KV
+    const customTasks = [];
+    for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
+      customTasks.push(entry.value);
+    }
+
+    ctx.response.body = [...defaultTasks, ...customTasks];
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Завершение задания
+router.post("/user/:userId/complete-task", async (ctx) => {
+  try {
+    const userId = ctx.params.userId;
+    const { taskId } = await ctx.request.body().value;
+    
+    const user = (await kv.get(["users", userId])).value;
+    
+    if (!user) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "User not found" };
+      return;
+    }
+    
+    const completedTasks = user.completedTasks || [];
+    if (completedTasks.includes(taskId)) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Task already completed" };
+      return;
+    }
+    
+    // Находим задание
+    const tasksResponse = await fetch(`${ctx.request.url.origin}/tasks`);
+    const tasks = await tasksResponse.json();
+    const task = tasks.find(t => t.id === taskId);
+    
+    if (!task) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Task not found" };
+      return;
+    }
+    
+    const newBalance = user.balance + task.reward;
+    const newCompletedTasks = [...completedTasks, taskId];
+    
+    await kv.set(["users", userId], {
+      ...user,
+      balance: newBalance,
+      completedTasks: newCompletedTasks
+    });
+    
+    ctx.response.body = {
+      balance: newBalance,
+      completedTasks: newCompletedTasks
+    };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Админ-панель
+router.post("/admin/login", async (ctx) => {
+  try {
+    const { password } = await ctx.request.body().value;
+    if (password === CONFIG.ADMIN_PASSWORD) {
+      ctx.response.body = { 
+        success: true, 
+        token: "admin_" + generateId() 
+      };
+    } else {
+      ctx.response.status = 401;
+      ctx.response.body = { error: "Wrong password" };
+    }
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+router.get("/admin/withdrawals", async (ctx) => {
+  try {
+    const withdrawals = [];
+    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+      withdrawals.push(entry.value);
+    }
+    ctx.response.body = withdrawals;
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+router.post("/admin/withdrawals/:id", async (ctx) => {
+  try {
+    const { status } = await ctx.request.body().value;
+    const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
+
+    if (!withdrawal) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Not found" };
+      return;
+    }
+
+    await kv.set(["withdrawals", ctx.params.id], {
+      ...withdrawal,
+      status,
+      processedAt: new Date().toISOString()
+    });
+
+    ctx.response.body = { success: true };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Управление заданиями (админ)
+router.get("/admin/tasks", async (ctx) => {
+  try {
+    const customTasks = [];
+    for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
+      customTasks.push(entry.value);
+    }
+    
+    ctx.response.body = customTasks;
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+router.post("/admin/tasks", async (ctx) => {
+  try {
+    const { title, reward, description, url, cooldown } = await ctx.request.body().value;
+    const taskId = `custom_${generateId()}`;
+    
+    await kv.set(["custom_tasks", taskId], {
+      id: taskId,
+      title,
+      reward: parseFloat(reward),
+      description,
+      url,
+      cooldown: parseInt(cooldown) || 10,
+      createdAt: new Date().toISOString()
+    });
+    
+    ctx.response.body = { id: taskId };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+router.delete("/admin/tasks/:id", async (ctx) => {
+  try {
+    await kv.delete(["custom_tasks", ctx.params.id]);
+    ctx.response.body = { success: true };
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Статус сервера
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    status: "OK",
+    version: "1.0",
+    endpoints: {
+      register: "POST /register",
+      reward: "/reward?userid=USERID&secret=wagner46375",
+      withdraw: "POST /withdraw",
+      admin: "/admin/login",
+      tasks: "GET /tasks",
+      completeTask: "POST /user/:userId/complete-task"
+    }
   };
+});
+
+// Обработка ошибок
+app.use(async (ctx) => {
+  ctx.response.status = 404;
+  ctx.response.body = { error: "Not found" };
+});
+
+app.addEventListener("error", (evt) => {
+  console.error("Server error:", evt.error);
 });
 
 // Запуск сервера
