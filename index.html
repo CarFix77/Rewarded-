@@ -561,10 +561,17 @@
       apiUrl: "https://carfix77-rewarded-34.deno.dev",
       rewardPerAd: 0.0003,
       secretKey: "wagner46375",
+      webhookSecret: "wagner1080",
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15,
-      adminPassword: "8223Nn8223"
+      adminPassword: "8223Nn8223",
+      taskRewards: {
+        FOLLOW: 0.10,
+        LIKE: 0.05,
+        RETWEET: 0.07,
+        COMMENT: 0.15
+      }
     };
 
     const state = {
@@ -590,13 +597,16 @@
           const refCode = new URLSearchParams(window.location.search).get('ref');
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refCode })
+            headers: { 
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({ refCode: refCode || null })
           });
           
           if (!response.ok) {
-            const error = await response.text();
-            throw new Error(error || 'Ошибка регистрации');
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || 'Ошибка регистрации');
           }
           
           const data = await response.json();
@@ -605,28 +615,37 @@
           state.userId = data.userId;
           state.referralCode = data.refCode;
           localStorage.setItem('userId', state.userId);
+          
+          // Очищаем ref из URL после регистрации
+          if (refCode) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
         }
         
         await loadUserData();
       } catch (error) {
         console.error("Ошибка инициализации:", error);
+        showError(error.message || "Ошибка подключения к серверу");
         showConnectionError(true);
       }
     }
 
     async function loadUserData() {
       try {
-        // Загружаем данные пользователя
-        const userResponse = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
-        if (!userResponse.ok) throw new Error('Ошибка загрузки данных пользователя');
+        const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Ошибка загрузки данных пользователя');
+        }
         
-        const userData = await userResponse.json();
+        const userData = await response.json();
         
-        // Загружаем статистику просмотров за сегодня
+        // Получаем статистику просмотров за сегодня
         const today = new Date().toISOString().split('T')[0];
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
-        const statsData = await statsResponse.json();
+        const statsData = statsResponse.ok ? await statsResponse.json() : 0;
         
+        // Обновляем состояние
         state.balance = userData.balance || 0;
         state.referrals = userData.refCount || 0;
         state.referralEarnings = userData.refEarnings || 0;
@@ -638,7 +657,7 @@
         updateUI();
       } catch (error) {
         console.error("Ошибка загрузки данных:", error);
-        showConnectionError(true);
+        showError(error.message || "Ошибка загрузки данных");
       }
     }
 
@@ -660,8 +679,8 @@
         const response = await fetch(url);
         
         if (!response.ok) {
-          const error = await response.text();
-          throw new Error(error || "Ошибка при просмотре рекламы");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка при просмотре рекламы");
         }
 
         const result = await response.json();
@@ -707,7 +726,10 @@
       try {
         const response = await fetch(`${CONFIG.apiUrl}/withdraw`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
           body: JSON.stringify({
             userId: state.userId,
             wallet,
@@ -716,8 +738,8 @@
         });
 
         if (!response.ok) {
-          const error = await response.text();
-          throw new Error(error || "Ошибка вывода");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка вывода");
         }
 
         const result = await response.json();
@@ -747,7 +769,10 @@
     async function loadTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/tasks`);
-        if (!response.ok) throw new Error("Ошибка загрузки заданий");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка загрузки заданий");
+        }
         
         state.tasks = await response.json();
         renderTasks();
@@ -812,11 +837,17 @@
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
           body: JSON.stringify({ taskId })
         });
         
-        if (!response.ok) throw new Error("Ошибка выполнения задания");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка выполнения задания");
+        }
         
         const result = await response.json();
         state.balance = result.balance;
@@ -846,13 +877,16 @@
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/login`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
           body: JSON.stringify({ password })
         });
         
         if (!response.ok) {
-          const error = await response.text();
-          throw new Error(error || "Ошибка авторизации");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка авторизации");
         }
 
         const data = await response.json();
@@ -867,7 +901,7 @@
         }
       } catch (error) {
         console.error("Ошибка авторизации:", error);
-        showError("Неверный пароль или ошибка сервера");
+        showError(error.message || "Неверный пароль или ошибка сервера");
       }
     }
 
@@ -884,10 +918,16 @@
     async function loadWithdrawals(filter = 'pending') {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
-          headers: { 'Authorization': `Bearer ${state.adminToken}` }
+          headers: { 
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
+          }
         });
         
-        if (!response.ok) throw new Error("Ошибка загрузки заявок");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка загрузки заявок");
+        }
         
         const allWithdrawals = await response.json();
         const filtered = allWithdrawals.filter(w => w.status === filter);
@@ -954,12 +994,16 @@
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${state.adminToken}`
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
           },
           body: JSON.stringify({ status })
         });
         
-        if (!response.ok) throw new Error("Ошибка обработки заявки");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка обработки заявки");
+        }
         
         showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
         loadWithdrawals('pending');
@@ -972,10 +1016,16 @@
     async function loadAdminTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
-          headers: { 'Authorization': `Bearer ${state.adminToken}` }
+          headers: { 
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
+          }
         });
         
-        if (!response.ok) throw new Error("Ошибка загрузки заданий");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка загрузки заданий");
+        }
         
         state.tasks = await response.json();
         renderAdminTasks();
@@ -1042,12 +1092,16 @@
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${state.adminToken}`
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
           },
           body: JSON.stringify({ title, reward, description, url, cooldown })
         });
         
-        if (!response.ok) throw new Error("Ошибка добавления задания");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка добавления задания");
+        }
         
         const newTask = await response.json();
         state.tasks.push(newTask);
@@ -1063,7 +1117,7 @@
         showNotification("Задание добавлено!");
       } catch (error) {
         console.error("Ошибка добавления задания:", error);
-        showError("Ошибка добавления задания");
+        showError(error.message || "Ошибка добавления задания");
       }
     }
 
@@ -1074,18 +1128,22 @@
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks/${taskId}`, {
           method: 'DELETE',
           headers: { 
-            'Authorization': `Bearer ${state.adminToken}`
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
           }
         });
         
-        if (!response.ok) throw new Error("Ошибка удаления задания");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка удаления задания");
+        }
         
         state.tasks = state.tasks.filter(t => t.id !== taskId);
         renderAdminTasks();
         showNotification("Задание удалено!");
       } catch (error) {
         console.error("Ошибка удаления задания:", error);
-        showError("Ошибка удаления задания");
+        showError(error.message || "Ошибка удаления задания");
       }
     }
 
@@ -1174,4 +1232,4 @@
     document.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
-</html>
+</html> 
