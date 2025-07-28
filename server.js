@@ -5,7 +5,8 @@ const CONFIG = {
   SECRET_KEY: "wagner46375",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
-  REFERRAL_PERCENT: 0.15
+  REFERRAL_PERCENT: 0.15,
+  ADMIN_PASSWORD: "8223Nn8223"
 };
 
 const kv = await Deno.openKv();
@@ -15,36 +16,32 @@ const router = new Router();
 // CORS Middleware
 app.use(async (ctx, next) => {
   ctx.response.headers.set("Access-Control-Allow-Origin", "*");
-  ctx.response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  ctx.response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+  ctx.response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  ctx.response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
   await next();
 });
 
-// Генерация ID
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Проверка работы сервера
+// Основные endpoint'ы
 router.get("/", (ctx) => {
   ctx.response.body = {
     status: "online",
     message: "AdRewards PRO Server",
     endpoints: [
-      "POST /register - Регистрация нового пользователя",
-      "GET /reward?userid=ID&secret=KEY - Получить награду за просмотр",
-      "GET /user/:userId - Информация о пользователе"
+      "POST /register - Регистрация",
+      "GET /reward?userid=ID&secret=KEY - Награда за просмотр",
+      "POST /withdraw - Вывод средств",
+      "POST /admin/login - Аутентификация админа"
     ]
   };
 });
 
-// Регистрация пользователя
 router.post("/register", async (ctx) => {
   try {
-    const body = ctx.request.body();
-    const { value } = body;
-    const { refCode } = await value;
-    
+    const { refCode } = await ctx.request.body().value;
     const userId = `user_${generateId()}`;
     const userRefCode = generateId().toString();
 
@@ -53,10 +50,10 @@ router.post("/register", async (ctx) => {
       refCode: userRefCode,
       refCount: 0,
       refEarnings: 0,
+      completedTasks: [],
       createdAt: new Date().toISOString()
     });
 
-    // Реферальная система
     if (refCode) {
       for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.refCode === refCode) {
@@ -72,41 +69,17 @@ router.post("/register", async (ctx) => {
       }
     }
 
-    ctx.response.body = {
-      success: true,
-      userId,
-      refCode: userRefCode,
-      balance: 0
-    };
-
+    ctx.response.body = { userId, refCode: userRefCode };
   } catch (error) {
     ctx.response.status = 500;
     ctx.response.body = { error: "Registration failed" };
   }
 });
 
-// Получение информации о пользователе
-router.get("/user/:userId", async (ctx) => {
-  try {
-    const user = (await kv.get(["users", ctx.params.userId])).value;
-    if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "User not found" };
-      return;
-    }
-    ctx.response.body = user;
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Server error" };
-  }
-});
-
-// Награда за просмотр
 router.get("/reward", async (ctx) => {
   try {
-    const params = ctx.request.url.searchParams;
-    const userId = params.get("userid");
-    const secret = params.get("secret");
+    const userId = ctx.request.url.searchParams.get("userid");
+    const secret = ctx.request.url.searchParams.get("secret");
 
     if (secret !== CONFIG.SECRET_KEY) {
       ctx.response.status = 401;
@@ -131,15 +104,64 @@ router.get("/reward", async (ctx) => {
       .set(["views", userId, today], dailyViews + 1)
       .commit();
 
-    ctx.response.body = {
-      success: true,
-      balance: newBalance,
-      viewsToday: dailyViews + 1
-    };
-
+    ctx.response.body = { balance: newBalance, viewsToday: dailyViews + 1 };
   } catch (error) {
     ctx.response.status = 500;
     ctx.response.body = { error: "Reward processing failed" };
+  }
+});
+
+router.post("/withdraw", async (ctx) => {
+  try {
+    const { userId, wallet, amount } = await ctx.request.body().value;
+    const user = (await kv.get(["users", userId])).value;
+
+    if (!user) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "User not found" };
+      return;
+    }
+
+    if (amount < CONFIG.MIN_WITHDRAW || amount > user.balance) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid amount" };
+      return;
+    }
+
+    const withdrawId = `wd_${generateId()}`;
+    
+    await kv.atomic()
+      .set(["users", userId], { ...user, balance: user.balance - amount })
+      .set(["withdrawals", withdrawId], {
+        userId,
+        amount,
+        wallet,
+        date: new Date().toISOString(),
+        status: "pending"
+      })
+      .commit();
+
+    ctx.response.body = { withdrawId };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Withdrawal failed" };
+  }
+});
+
+// Админ-панель
+router.post("/admin/login", async (ctx) => {
+  try {
+    const { password } = await ctx.request.body().value;
+    
+    if (password === CONFIG.ADMIN_PASSWORD) {
+      ctx.response.body = { token: `admin_${generateId()}` };
+    } else {
+      ctx.response.status = 401;
+      ctx.response.body = { error: "Wrong password" };
+    }
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Login failed" };
   }
 });
 
