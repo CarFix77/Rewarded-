@@ -561,17 +561,10 @@
       apiUrl: "https://carfix77-rewarded-34.deno.dev",
       rewardPerAd: 0.0003,
       secretKey: "wagner46375",
-      webhookSecret: "wagner1080",
       dailyLimit: 30,
       minWithdraw: 1.00,
-      referralPercent: 0.15,
-      adminPassword: "8223Nn8223",
-      taskRewards: {
-        FOLLOW: 0.10,
-        LIKE: 0.05,
-        RETWEET: 0.07,
-        COMMENT: 0.15
-      }
+      referralPercent: 0.15
+      // Пароль админа удален из фронтенда
     };
 
     const state = {
@@ -584,16 +577,17 @@
       referralCode: "",
       completedTasks: [],
       adminToken: null,
-      tasks: [],
-      connectionRetries: 0
+      tasks: []
     };
 
-    // Основные функции
+    // Функция инициализации пользователя с улучшенной обработкой ошибок
     async function initUser() {
       try {
         state.userId = localStorage.getItem('userId');
+        console.log('Current userId:', state.userId);
         
         if (!state.userId) {
+          console.log('Registering new user...');
           const refCode = new URLSearchParams(window.location.search).get('ref');
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
@@ -605,18 +599,22 @@
           });
           
           if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || 'Ошибка регистрации');
+            const error = await response.text();
+            console.error('Registration failed:', error);
+            throw new Error(error || 'Ошибка регистрации');
           }
           
           const data = await response.json();
-          if (!data.userId) throw new Error('Неверный ответ сервера');
+          console.log('Registration data:', data);
+          
+          if (!data.userId) {
+            throw new Error('Неверный ответ сервера: отсутствует userId');
+          }
           
           state.userId = data.userId;
           state.referralCode = data.refCode;
           localStorage.setItem('userId', state.userId);
           
-          // Очищаем ref из URL после регистрации
           if (refCode) {
             window.history.replaceState({}, document.title, window.location.pathname);
           }
@@ -625,14 +623,33 @@
         await loadUserData();
       } catch (error) {
         console.error("Ошибка инициализации:", error);
+        
+        // При ошибке "User not found" очищаем localStorage и пробуем снова
+        if (error.message.includes("not found")) {
+          localStorage.removeItem('userId');
+          state.userId = null;
+          await initUser();
+          return;
+        }
+        
         showError(error.message || "Ошибка подключения к серверу");
         showConnectionError(true);
       }
     }
 
+    // Функция загрузки данных пользователя
     async function loadUserData() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
+        
+        if (response.status === 404) {
+          console.error("User not found, clearing local storage");
+          localStorage.removeItem('userId');
+          state.userId = null;
+          await initUser(); // Повторная попытка регистрации
+          return;
+        }
+        
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || 'Ошибка загрузки данных пользователя');
@@ -661,6 +678,7 @@
       }
     }
 
+    // Функция просмотра рекламы
     async function startAd() {
       if (state.isAdBlocked) {
         showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
@@ -699,6 +717,7 @@
       }
     }
 
+    // Функция вывода средств
     async function submitWithdrawal() {
       const wallet = document.getElementById('wallet').value.trim();
       const amount = parseFloat(document.getElementById('amount').value);
@@ -756,6 +775,7 @@
       }
     }
 
+    // Функция копирования реферальной ссылки
     function copyReferralLink() {
       const link = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
       navigator.clipboard.writeText(link).then(() => {
@@ -766,6 +786,7 @@
       });
     }
 
+    // Функция загрузки заданий
     async function loadTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/tasks`);
@@ -786,6 +807,7 @@
       }
     }
 
+    // Функция отображения заданий
     function renderTasks() {
       const container = document.getElementById('tasks-list');
       container.innerHTML = '';
@@ -816,6 +838,7 @@
       });
     }
 
+    // Функция выполнения задания
     async function startTask(taskId) {
       const task = state.tasks.find(t => t.id === taskId);
       if (!task) return;
@@ -833,6 +856,7 @@
       }, task.cooldown * 1000);
     }
 
+    // Функция завершения задания
     async function completeTask(taskId) {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
@@ -871,6 +895,7 @@
       document.getElementById('admin-password').value = '';
     }
 
+    // Проверка пароля админа (без хранения пароля во фронтенде)
     async function checkAdminPassword() {
       const password = document.getElementById('admin-password').value;
       
@@ -901,7 +926,7 @@
         }
       } catch (error) {
         console.error("Ошибка авторизации:", error);
-        showError(error.message || "Неверный пароль или ошибка сервера");
+        showError("Неверный пароль или ошибка сервера");
       }
     }
 
@@ -915,6 +940,7 @@
       document.getElementById('admin-panel').classList.add('hidden');
     }
 
+    // Загрузка заявок на вывод (админ)
     async function loadWithdrawals(filter = 'pending') {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
@@ -942,6 +968,7 @@
       }
     }
 
+    // Отображение заявок на вывод (админ)
     function renderWithdrawals(withdrawals, filter) {
       const container = document.getElementById('withdrawals-list');
       container.innerHTML = '';
@@ -988,6 +1015,7 @@
       });
     }
 
+    // Обработка заявки на вывод (админ)
     async function processWithdrawal(id, status) {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
@@ -1013,6 +1041,7 @@
       }
     }
 
+    // Загрузка заданий (админ)
     async function loadAdminTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
@@ -1039,6 +1068,7 @@
       }
     }
 
+    // Отображение заданий (админ)
     function renderAdminTasks() {
       const container = document.getElementById('current-tasks');
       container.innerHTML = '';
@@ -1075,6 +1105,7 @@
       });
     }
 
+    // Добавление задания (админ)
     async function addTask() {
       const title = document.getElementById('new-task-title').value.trim();
       const reward = parseFloat(document.getElementById('new-task-reward').value);
@@ -1121,6 +1152,7 @@
       }
     }
 
+    // Удаление задания (админ)
     async function deleteTask(taskId) {
       if (!confirm("Удалить это задание?")) return;
       
@@ -1232,4 +1264,4 @@
     document.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
-</html> 
+</html>
