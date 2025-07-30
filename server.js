@@ -1,7 +1,7 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 
-// Конфигурация
+// Configuration
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
@@ -16,15 +16,15 @@ const CONFIG = {
     RETWEET: 0.07,
     COMMENT: 0.15
   },
-  PORT: parseInt(Deno.env.get("PORT") || 8000
+  PORT: parseInt(Deno.env.get("PORT")) || 8000
 };
 
-// Инициализация KV и приложения
+// Initialize KV and app
 const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
-// Мидлвары
+// Middleware
 app.use(oakCors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -36,47 +36,48 @@ app.use(async (ctx, next) => {
   await next();
 });
 
-// Вспомогательные функции
-const generateId = () => Math.floor(100000 + Math.random() * 900000);
-const today = () => new Date().toISOString().split("T")[0];
+// Helper functions
+function generateId() {
+  return Math.floor(100000 + Math.random() * 900000);
+}
 
-// Валидация данных
-const validateWithdrawal = (wallet, amount, balance) => {
+function getToday() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function validateWithdrawal(wallet, amount, balance) {
   if (!/^P\d{7,}$/.test(wallet)) return "Invalid PAYEER wallet format";
   if (isNaN(amount) || amount <= 0) return "Invalid amount";
   if (amount < CONFIG.MIN_WITHDRAW) return `Minimum withdrawal is $${CONFIG.MIN_WITHDRAW}`;
   if (amount > balance) return "Insufficient funds";
   return null;
-};
+}
 
-// Обработка ошибок
-const handleError = (ctx, error) => {
+// Error handler
+async function handleError(ctx, error) {
   console.error("Error:", error);
   ctx.response.status = 500;
   ctx.response.body = { error: "Internal server error" };
-};
+}
 
-// API Endpoints
+// Routes
 
-// Регистрация пользователя
+// User registration
 router.post("/register", async (ctx) => {
   try {
     const { refCode } = await ctx.request.body().value;
     const userId = `user_${generateId()}`;
     const userRefCode = generateId().toString();
 
-    const userData = {
+    await kv.set(["users", userId], {
       balance: 0,
       refCode: userRefCode,
       refCount: 0,
       refEarnings: 0,
       completedTasks: [],
       createdAt: new Date().toISOString()
-    };
+    });
 
-    await kv.set(["users", userId], userData);
-
-    // Реферальный бонус
     if (refCode) {
       for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.refCode === refCode) {
@@ -102,7 +103,7 @@ router.post("/register", async (ctx) => {
   }
 });
 
-// Получение информации о пользователе
+// Get user info
 router.get("/user/:userId", async (ctx) => {
   try {
     const userId = ctx.params.userId;
@@ -123,18 +124,7 @@ router.get("/user/:userId", async (ctx) => {
   }
 });
 
-// Получение статистики просмотров
-router.get("/views/:userId/:date", async (ctx) => {
-  try {
-    const { userId, date } = ctx.params;
-    const views = (await kv.get(["views", userId, date])).value || 0;
-    ctx.response.body = views;
-  } catch (error) {
-    handleError(ctx, error);
-  }
-});
-
-// Награда за просмотр
+// Reward endpoint
 router.get("/reward", async (ctx) => {
   try {
     const userId = ctx.request.url.searchParams.get("userid");
@@ -146,9 +136,9 @@ router.get("/reward", async (ctx) => {
       return;
     }
 
-    const currentDate = today();
+    const today = getToday();
     const userKey = ["users", userId];
-    const viewsKey = ["views", userId, currentDate];
+    const viewsKey = ["views", userId, today];
 
     const [userRes, viewsRes] = await kv.getMany([userKey, viewsKey]);
     const user = userRes.value || { balance: 0 };
@@ -179,7 +169,7 @@ router.get("/reward", async (ctx) => {
   }
 });
 
-// Вывод средств
+// Withdrawal
 router.post("/withdraw", async (ctx) => {
   try {
     const { userId, wallet, amount } = await ctx.request.body().value;
@@ -191,10 +181,10 @@ router.post("/withdraw", async (ctx) => {
       return;
     }
 
-    const validationError = validateWithdrawal(wallet, amount, user.balance);
-    if (validationError) {
+    const error = validateWithdrawal(wallet, amount, user.balance);
+    if (error) {
       ctx.response.status = 400;
-      ctx.response.body = { error: validationError };
+      ctx.response.body = { error };
       return;
     }
 
@@ -216,36 +206,36 @@ router.post("/withdraw", async (ctx) => {
   }
 });
 
-// Задания
+// Tasks
 const DEFAULT_TASKS = [
   {
     id: "follow_twitter",
-    title: "Подписаться на Twitter",
-    description: "Подпишитесь на наш Twitter аккаунт и получите награду",
+    title: "Follow Twitter",
+    description: "Follow our Twitter account",
     reward: CONFIG.TASK_REWARDS.FOLLOW,
     url: "https://twitter.com",
     cooldown: 10
   },
   {
     id: "like_tweet",
-    title: "Лайкнуть твит",
-    description: "Поставьте лайк на наш последний твит",
+    title: "Like Tweet",
+    description: "Like our latest tweet",
     reward: CONFIG.TASK_REWARDS.LIKE,
     url: "https://twitter.com/tweet",
     cooldown: 10
   },
   {
     id: "retweet",
-    title: "Ретвитнуть",
-    description: "Сделайте ретвит нашего сообщения",
+    title: "Retweet",
+    description: "Retweet our message",
     reward: CONFIG.TASK_REWARDS.RETWEET,
     url: "https://twitter.com/retweet",
     cooldown: 15
   },
   {
     id: "comment",
-    title: "Оставить комментарий",
-    description: "Оставьте комментарий под нашим постом",
+    title: "Leave Comment",
+    description: "Comment on our post",
     reward: CONFIG.TASK_REWARDS.COMMENT,
     url: "https://twitter.com/comment",
     cooldown: 20
@@ -264,12 +254,11 @@ router.get("/tasks", async (ctx) => {
   }
 });
 
-// Завершение задания
+// Complete task
 router.post("/user/:userId/complete-task", async (ctx) => {
   try {
     const userId = ctx.params.userId;
     const { taskId } = await ctx.request.body().value;
-    
     const user = (await kv.get(["users", userId])).value;
     
     if (!user) {
@@ -284,7 +273,6 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       return;
     }
     
-    // Получаем список всех заданий
     const tasks = [...DEFAULT_TASKS];
     for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
       tasks.push(entry.value);
@@ -315,7 +303,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   }
 });
 
-// Админ-панель
+// Admin endpoints
 router.post("/admin/login", async (ctx) => {
   try {
     const { password } = await ctx.request.body().value;
@@ -368,7 +356,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
   }
 });
 
-// Управление заданиями (админ)
+// Admin task management
 router.get("/admin/tasks", async (ctx) => {
   try {
     const customTasks = [];
@@ -386,7 +374,7 @@ router.post("/admin/tasks", async (ctx) => {
     const { title, reward, description, url, cooldown } = await ctx.request.body().value;
     const taskId = `custom_${generateId()}`;
     
-    const taskData = {
+    await kv.set(["custom_tasks", taskId], {
       id: taskId,
       title,
       reward: parseFloat(reward),
@@ -394,9 +382,8 @@ router.post("/admin/tasks", async (ctx) => {
       url,
       cooldown: parseInt(cooldown) || 10,
       createdAt: new Date().toISOString()
-    };
+    });
     
-    await kv.set(["custom_tasks", taskId], taskData);
     ctx.response.body = { id: taskId };
   } catch (error) {
     handleError(ctx, error);
@@ -412,7 +399,7 @@ router.delete("/admin/tasks/:id", async (ctx) => {
   }
 });
 
-// Статус сервера
+// Status endpoint
 router.get("/", (ctx) => {
   ctx.response.body = {
     status: "OK",
@@ -428,7 +415,7 @@ router.get("/", (ctx) => {
   };
 });
 
-// Обработка ошибок
+// Error handling
 app.use(async (ctx) => {
   ctx.response.status = 404;
   ctx.response.body = { error: "Not found" };
@@ -438,7 +425,7 @@ app.addEventListener("error", (evt) => {
   console.error("Server error:", evt.error);
 });
 
-// Подключение роутера и запуск сервера
+// Start server
 app.use(router.routes());
 app.use(router.allowedMethods());
 
