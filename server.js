@@ -48,7 +48,6 @@ async function cleanupOldData() {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
     
-    // Очистка старых просмотров (храним только последние 7 дней)
     for await (const entry of kv.list({ prefix: ["views"] })) {
       const date = entry.key[2];
       if (date < new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0]) {
@@ -56,7 +55,6 @@ async function cleanupOldData() {
       }
     }
     
-    // Очистка неактивных пользователей (не активны более 30 дней)
     for await (const entry of kv.list({ prefix: ["users"] })) {
       if (entry.value.createdAt < thirtyDaysAgo) {
         if (entry.value.balance < 0.01) {
@@ -68,7 +66,6 @@ async function cleanupOldData() {
       }
     }
     
-    // Очистка завершенных выводов (старше 30 дней)
     for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
       if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
         await kv.delete(entry.key);
@@ -85,7 +82,7 @@ async function cleanupOldData() {
 cleanupOldData();
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 
-// Регистрация пользователя (исправленная версия с правильными реферальными ссылками)
+// Регистрация пользователя
 router.post("/register", async (ctx) => {
   try {
     const { refCode } = await ctx.request.body().value;
@@ -101,7 +98,6 @@ router.post("/register", async (ctx) => {
       createdAt: new Date().toISOString()
     });
 
-    // Реферальный бонус
     if (refCode) {
       for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.refCode === refCode) {
@@ -117,9 +113,8 @@ router.post("/register", async (ctx) => {
       }
     }
 
-    // Формируем правильную реферальную ссылку
-    const requestOrigin = ctx.request.headers.get("origin") || ctx.request.url.origin;
-    const refLink = `${requestOrigin}?ref=${userRefCode}`;
+    // ОБНОВЛЕННАЯ РЕФЕРАЛЬНАЯ ССЫЛКА
+    const refLink = `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`;
 
     ctx.response.body = {
       userId,
@@ -254,35 +249,27 @@ router.get("/tasks", async (ctx) => {
     const defaultTasks = [
       {
         id: "follow_twitter",
-        title: "Подписаться на Twitter",
-        description: "Подпишитесь на наш Twitter аккаунт и получите награду",
+        title: "Follow Twitter",
         reward: CONFIG.TASK_REWARDS.FOLLOW,
-        url: "https://twitter.com",
-        cooldown: 10
+        url: "https://twitter.com"
       },
       {
         id: "like_tweet",
-        title: "Лайкнуть твит",
-        description: "Поставьте лайк на наш последний твит",
+        title: "Like Tweet",
         reward: CONFIG.TASK_REWARDS.LIKE,
-        url: "https://twitter.com/tweet",
-        cooldown: 10
+        url: "https://twitter.com/tweet"
       },
       {
         id: "retweet",
-        title: "Ретвитнуть",
-        description: "Сделайте ретвит нашего сообщения",
+        title: "Retweet",
         reward: CONFIG.TASK_REWARDS.RETWEET,
-        url: "https://twitter.com/retweet",
-        cooldown: 15
+        url: "https://twitter.com/retweet"
       },
       {
         id: "comment",
-        title: "Оставить комментарий",
-        description: "Оставьте комментарий под нашим постом",
+        title: "Comment",
         reward: CONFIG.TASK_REWARDS.COMMENT,
-        url: "https://twitter.com/comment",
-        cooldown: 20
+        url: "https://twitter.com/comment"
       }
     ];
 
