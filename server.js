@@ -9,7 +9,7 @@ const CONFIG = {
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
-  TELEGRAM_BOT_NAME: "Ad_Rew_ards_bot",
+  TELEGRAM_BOT_LINK: "https://t.me/Ad_Rew_ards_bot",
   TASK_REWARDS: {
     FOLLOW: 0.10,
     LIKE: 0.05,
@@ -22,78 +22,41 @@ const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
-// Middleware
+// CORS Middleware
 app.use(oakCors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
+// Logging Middleware
 app.use(async (ctx, next) => {
   console.log(`${ctx.request.method} ${ctx.request.url.pathname}`);
   await next();
 });
 
-// Helper functions
+// Helper Functions
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-async function cleanupOldData() {
-  try {
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
-    
-    // Clean old views (keep last 7 days)
-    for await (const entry of kv.list({ prefix: ["views"] })) {
-      const date = entry.key[2];
-      if (date < new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0]) {
-        await kv.delete(entry.key);
-      }
-    }
-    
-    // Clean inactive users (30+ days inactive with balance < $0.01)
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.createdAt < thirtyDaysAgo && entry.value.balance < 0.01) {
-        await kv.delete(entry.key);
-        // Clean user's views
-        for await (const viewEntry of kv.list({ prefix: ["views", entry.key[1]] })) {
-          await kv.delete(viewEntry.key);
-        }
-      }
-    }
-    
-    // Clean old withdrawals (30+ days completed)
-    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-      if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
-        await kv.delete(entry.key);
-      }
-    }
-    
-    console.log("Cleanup completed");
-  } catch (error) {
-    console.error("Cleanup error:", error);
-  }
-}
-
 // Routes
+
+// User Registration
 router.post("/register", async (ctx) => {
   try {
-    const { refCode, telegramId } = await ctx.request.body().value;
+    const { refCode } = await ctx.request.body().value;
     const userId = `user_${generateId()}`;
     const userRefCode = generateId().toString();
 
-    const userData = {
+    await kv.set(["users", userId], {
       balance: 0,
       refCode: userRefCode,
       refCount: 0,
       refEarnings: 0,
       completedTasks: [],
-      createdAt: new Date().toISOString(),
-      telegramId: telegramId || null
-    };
-
-    await kv.set(["users", userId], userData);
+      createdAt: new Date().toISOString()
+    });
 
     // Handle referral
     if (refCode) {
@@ -111,69 +74,22 @@ router.post("/register", async (ctx) => {
       }
     }
 
-    const telegramRefLink = `https://t.me/${CONFIG.TELEGRAM_BOT_NAME}?start=${userRefCode}`;
+    const telegramRefLink = `${CONFIG.TELEGRAM_BOT_LINK}?start=${userRefCode}`;
     const webRefLink = `${ctx.request.headers.get('origin') || ctx.request.url.origin}?ref=${userRefCode}`;
 
     ctx.response.body = {
       userId,
       refCode: userRefCode,
-      refLink: webRefLink,
+      webRefLink,
       telegramRefLink
     };
   } catch (error) {
-    console.error("Registration error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Registration failed" };
   }
 });
 
-router.get("/telegram/check-ref/:refCode", async (ctx) => {
-  try {
-    const refCode = ctx.params.refCode;
-    let isValid = false;
-    let referrerId = null;
-
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.refCode === refCode) {
-        isValid = true;
-        referrerId = entry.key[1];
-        break;
-      }
-    }
-
-    ctx.response.body = { isValid, referrerId };
-  } catch (error) {
-    console.error("Telegram ref check error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
-
-router.post("/user/:userId/link-telegram", async (ctx) => {
-  try {
-    const userId = ctx.params.userId;
-    const { telegramId } = await ctx.request.body().value;
-    
-    const user = (await kv.get(["users", userId])).value;
-    if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "User not found" };
-      return;
-    }
-
-    await kv.set(["users", userId], {
-      ...user,
-      telegramId
-    });
-
-    ctx.response.body = { success: true };
-  } catch (error) {
-    console.error("Link Telegram error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
-
+// Get User Info
 router.get("/user/:userId", async (ctx) => {
   try {
     const userId = ctx.params.userId;
@@ -188,61 +104,26 @@ router.get("/user/:userId", async (ctx) => {
     ctx.response.body = {
       ...user,
       completedTasks: user.completedTasks || [],
-      telegramRefLink: `https://t.me/${CONFIG.TELEGRAM_BOT_NAME}?start=${user.refCode}`
+      webRefLink: `${ctx.request.headers.get('origin') || ctx.request.url.origin}?ref=${user.refCode}`,
+      telegramRefLink: `${CONFIG.TELEGRAM_BOT_LINK}?start=${user.refCode}`
     };
   } catch (error) {
-    console.error("Get user error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to get user" };
   }
 });
 
-router.get("/telegram/user/:telegramId", async (ctx) => {
-  try {
-    const telegramId = ctx.params.telegramId;
-    let userData = null;
-
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.telegramId === telegramId) {
-        userData = entry.value;
-        userData.userId = entry.key[1];
-        break;
-      }
-    }
-
-    if (!userData) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "User not found" };
-      return;
-    }
-
-    ctx.response.body = {
-      ...userData,
-      telegramRefLink: `https://t.me/${CONFIG.TELEGRAM_BOT_NAME}?start=${userData.refCode}`
-    };
-  } catch (error) {
-    console.error("Get Telegram user error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
-
-router.get("/views/:userId/:date", async (ctx) => {
-  try {
-    const { userId, date } = ctx.params;
-    const views = (await kv.get(["views", userId, date])).value || 0;
-    ctx.response.body = views;
-  } catch (error) {
-    console.error("Get views error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
-
+// Reward Endpoint
 router.get("/reward", async (ctx) => {
   try {
     const userId = ctx.request.url.searchParams.get("userid");
     const secret = ctx.request.url.searchParams.get("secret");
+
+    if (!userId || !secret) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Missing parameters" };
+      return;
+    }
 
     if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
       ctx.response.status = 401;
@@ -273,12 +154,12 @@ router.get("/reward", async (ctx) => {
       viewsToday: dailyViews + 1
     };
   } catch (error) {
-    console.error("Reward error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Reward processing failed" };
   }
 });
 
+// Withdraw Funds
 router.post("/withdraw", async (ctx) => {
   try {
     const { userId, wallet, amount } = await ctx.request.body().value;
@@ -310,12 +191,12 @@ router.post("/withdraw", async (ctx) => {
 
     ctx.response.body = { success: true, withdrawId };
   } catch (error) {
-    console.error("Withdraw error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Withdrawal failed" };
   }
 });
 
+// Tasks Endpoints
 router.get("/tasks", async (ctx) => {
   try {
     const defaultTasks = [
@@ -360,12 +241,12 @@ router.get("/tasks", async (ctx) => {
 
     ctx.response.body = [...defaultTasks, ...customTasks];
   } catch (error) {
-    console.error("Get tasks error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to get tasks" };
   }
 });
 
+// Complete Task
 router.post("/user/:userId/complete-task", async (ctx) => {
   try {
     const userId = ctx.params.userId;
@@ -410,13 +291,12 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       completedTasks: newCompletedTasks
     };
   } catch (error) {
-    console.error("Complete task error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to complete task" };
   }
 });
 
-// Admin routes
+// Admin Endpoints
 router.post("/admin/login", async (ctx) => {
   try {
     const { password } = await ctx.request.body().value;
@@ -430,9 +310,8 @@ router.post("/admin/login", async (ctx) => {
       ctx.response.body = { error: "Wrong password" };
     }
   } catch (error) {
-    console.error("Admin login error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Admin login failed" };
   }
 });
 
@@ -444,9 +323,8 @@ router.get("/admin/withdrawals", async (ctx) => {
     }
     ctx.response.body = withdrawals;
   } catch (error) {
-    console.error("Get withdrawals error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to get withdrawals" };
   }
 });
 
@@ -469,9 +347,8 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
 
     ctx.response.body = { success: true };
   } catch (error) {
-    console.error("Process withdrawal error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to process withdrawal" };
   }
 });
 
@@ -484,9 +361,8 @@ router.get("/admin/tasks", async (ctx) => {
     
     ctx.response.body = customTasks;
   } catch (error) {
-    console.error("Get admin tasks error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to get tasks" };
   }
 });
 
@@ -507,9 +383,8 @@ router.post("/admin/tasks", async (ctx) => {
     
     ctx.response.body = { id: taskId };
   } catch (error) {
-    console.error("Add task error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to add task" };
   }
 });
 
@@ -518,51 +393,47 @@ router.delete("/admin/tasks/:id", async (ctx) => {
     await kv.delete(["custom_tasks", ctx.params.id]);
     ctx.response.body = { success: true };
   } catch (error) {
-    console.error("Delete task error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
+    ctx.response.body = { error: "Failed to delete task" };
   }
 });
 
-// Root endpoint
+// Root Endpoint
 router.get("/", (ctx) => {
   ctx.response.body = {
     status: "OK",
-    version: "1.1",
-    telegramBot: `https://t.me/${CONFIG.TELEGRAM_BOT_NAME}`,
+    version: "1.0",
     endpoints: {
       register: "POST /register",
-      reward: "/reward?userid=USERID&secret=wagner46375",
+      getUser: "GET /user/:userId",
+      reward: "GET /reward?userid=USERID&secret=SECRET",
       withdraw: "POST /withdraw",
-      telegram: {
-        checkRef: "GET /telegram/check-ref/:refCode",
-        linkAccount: "POST /user/:userId/link-telegram",
-        getUser: "GET /telegram/user/:telegramId"
-      },
-      admin: "/admin/login",
       tasks: "GET /tasks",
-      completeTask: "POST /user/:userId/complete-task"
+      completeTask: "POST /user/:userId/complete-task",
+      admin: {
+        login: "POST /admin/login",
+        withdrawals: "GET /admin/withdrawals",
+        processWithdrawal: "POST /admin/withdrawals/:id",
+        tasks: "GET /admin/tasks",
+        addTask: "POST /admin/tasks",
+        deleteTask: "DELETE /admin/tasks/:id"
+      }
     }
   };
 });
 
-// Error handling
-app.use(async (ctx) => {
+// 404 Handler
+app.use((ctx) => {
   ctx.response.status = 404;
-  ctx.response.body = { error: "Not found" };
+  ctx.response.body = { error: "Endpoint not found" };
 });
 
+// Error Handler
 app.addEventListener("error", (evt) => {
   console.error("Server error:", evt.error);
 });
 
-// Start server
+// Start Server
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-console.log(`Telegram bot: https://t.me/${CONFIG.TELEGRAM_BOT_NAME}`);
-
-// Start cleanup job
-cleanupOldData();
-setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
-
 await app.listen({ port });
