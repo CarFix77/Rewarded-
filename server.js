@@ -9,7 +9,6 @@ const CONFIG = {
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
-  TELEGRAM_BOT_LINK: "https://t.me/Ad_Rew_ards_bot",
   TASK_REWARDS: {
     FOLLOW: 0.10,
     LIKE: 0.05,
@@ -22,27 +21,71 @@ const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
-// CORS Middleware
+// Настройка CORS
 app.use(oakCors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-// Logging Middleware
+// Логирование запросов
 app.use(async (ctx, next) => {
   console.log(`${ctx.request.method} ${ctx.request.url.pathname}`);
   await next();
 });
 
-// Helper Functions
+app.use(router.routes());
+app.use(router.allowedMethods());
+
+// Генерация ID
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Routes
+// Функция для очистки старых данных
+async function cleanupOldData() {
+  try {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
+    
+    // Очистка старых просмотров (храним только последние 7 дней)
+    for await (const entry of kv.list({ prefix: ["views"] })) {
+      const date = entry.key[2];
+      if (date < new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0]) {
+        await kv.delete(entry.key);
+      }
+    }
+    
+    // Очистка неактивных пользователей (не активны более 30 дней)
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      if (entry.value.createdAt < thirtyDaysAgo) {
+        if (entry.value.balance < 0.01) {
+          await kv.delete(entry.key);
+          for await (const viewEntry of kv.list({ prefix: ["views", entry.key[1]] })) {
+            await kv.delete(viewEntry.key);
+          }
+        }
+      }
+    }
+    
+    // Очистка завершенных выводов (старше 30 дней)
+    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+      if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
+        await kv.delete(entry.key);
+      }
+    }
+    
+    console.log("Cleanup completed");
+  } catch (error) {
+    console.error("Cleanup error:", error);
+  }
+}
 
-// User Registration
+// Запускаем очистку при старте и затем каждые 24 часа
+cleanupOldData();
+setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
+
+// Регистрация пользователя (исправленная версия с правильными реферальными ссылками)
 router.post("/register", async (ctx) => {
   try {
     const { refCode } = await ctx.request.body().value;
@@ -58,7 +101,7 @@ router.post("/register", async (ctx) => {
       createdAt: new Date().toISOString()
     });
 
-    // Handle referral
+    // Реферальный бонус
     if (refCode) {
       for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.refCode === refCode) {
@@ -74,22 +117,23 @@ router.post("/register", async (ctx) => {
       }
     }
 
-    const telegramRefLink = `${CONFIG.TELEGRAM_BOT_LINK}?start=${userRefCode}`;
-    const webRefLink = `${ctx.request.headers.get('origin') || ctx.request.url.origin}?ref=${userRefCode}`;
+    // Формируем правильную реферальную ссылку
+    const requestOrigin = ctx.request.headers.get("origin") || ctx.request.url.origin;
+    const refLink = `${requestOrigin}?ref=${userRefCode}`;
 
     ctx.response.body = {
       userId,
       refCode: userRefCode,
-      webRefLink,
-      telegramRefLink
+      refLink: refLink
     };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Registration failed" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Get User Info
+// Получение информации о пользователе
 router.get("/user/:userId", async (ctx) => {
   try {
     const userId = ctx.params.userId;
@@ -103,27 +147,33 @@ router.get("/user/:userId", async (ctx) => {
     
     ctx.response.body = {
       ...user,
-      completedTasks: user.completedTasks || [],
-      webRefLink: `${ctx.request.headers.get('origin') || ctx.request.url.origin}?ref=${user.refCode}`,
-      telegramRefLink: `${CONFIG.TELEGRAM_BOT_LINK}?start=${user.refCode}`
+      completedTasks: user.completedTasks || []
     };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to get user" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Reward Endpoint
+// Получение статистики просмотров
+router.get("/views/:userId/:date", async (ctx) => {
+  try {
+    const { userId, date } = ctx.params;
+    const views = (await kv.get(["views", userId, date])).value || 0;
+    ctx.response.body = views;
+  } catch (error) {
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Reward endpoint
 router.get("/reward", async (ctx) => {
   try {
     const userId = ctx.request.url.searchParams.get("userid");
     const secret = ctx.request.url.searchParams.get("secret");
-
-    if (!userId || !secret) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Missing parameters" };
-      return;
-    }
 
     if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
       ctx.response.status = 401;
@@ -154,12 +204,13 @@ router.get("/reward", async (ctx) => {
       viewsToday: dailyViews + 1
     };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Reward processing failed" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Withdraw Funds
+// Вывод средств
 router.post("/withdraw", async (ctx) => {
   try {
     const { userId, wallet, amount } = await ctx.request.body().value;
@@ -191,12 +242,13 @@ router.post("/withdraw", async (ctx) => {
 
     ctx.response.body = { success: true, withdrawId };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Withdrawal failed" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Tasks Endpoints
+// Задания
 router.get("/tasks", async (ctx) => {
   try {
     const defaultTasks = [
@@ -241,12 +293,13 @@ router.get("/tasks", async (ctx) => {
 
     ctx.response.body = [...defaultTasks, ...customTasks];
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to get tasks" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Complete Task
+// Завершение задания
 router.post("/user/:userId/complete-task", async (ctx) => {
   try {
     const userId = ctx.params.userId;
@@ -291,12 +344,13 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       completedTasks: newCompletedTasks
     };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to complete task" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Admin Endpoints
+// Админ-панель
 router.post("/admin/login", async (ctx) => {
   try {
     const { password } = await ctx.request.body().value;
@@ -310,8 +364,9 @@ router.post("/admin/login", async (ctx) => {
       ctx.response.body = { error: "Wrong password" };
     }
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Admin login failed" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
@@ -323,8 +378,9 @@ router.get("/admin/withdrawals", async (ctx) => {
     }
     ctx.response.body = withdrawals;
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to get withdrawals" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
@@ -347,11 +403,13 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
 
     ctx.response.body = { success: true };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to process withdrawal" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
+// Управление заданиями (админ)
 router.get("/admin/tasks", async (ctx) => {
   try {
     const customTasks = [];
@@ -361,8 +419,9 @@ router.get("/admin/tasks", async (ctx) => {
     
     ctx.response.body = customTasks;
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to get tasks" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
@@ -383,8 +442,9 @@ router.post("/admin/tasks", async (ctx) => {
     
     ctx.response.body = { id: taskId };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to add task" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
@@ -393,47 +453,39 @@ router.delete("/admin/tasks/:id", async (ctx) => {
     await kv.delete(["custom_tasks", ctx.params.id]);
     ctx.response.body = { success: true };
   } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { error: "Failed to delete task" };
+    ctx.response.body = { error: "Internal server error" };
   }
 });
 
-// Root Endpoint
+// Статус сервера
 router.get("/", (ctx) => {
   ctx.response.body = {
     status: "OK",
     version: "1.0",
     endpoints: {
       register: "POST /register",
-      getUser: "GET /user/:userId",
-      reward: "GET /reward?userid=USERID&secret=SECRET",
+      reward: "/reward?userid=USERID&secret=wagner46375",
       withdraw: "POST /withdraw",
+      admin: "/admin/login",
       tasks: "GET /tasks",
-      completeTask: "POST /user/:userId/complete-task",
-      admin: {
-        login: "POST /admin/login",
-        withdrawals: "GET /admin/withdrawals",
-        processWithdrawal: "POST /admin/withdrawals/:id",
-        tasks: "GET /admin/tasks",
-        addTask: "POST /admin/tasks",
-        deleteTask: "DELETE /admin/tasks/:id"
-      }
+      completeTask: "POST /user/:userId/complete-task"
     }
   };
 });
 
-// 404 Handler
-app.use((ctx) => {
+// Обработка ошибок
+app.use(async (ctx) => {
   ctx.response.status = 404;
-  ctx.response.body = { error: "Endpoint not found" };
+  ctx.response.body = { error: "Not found" };
 });
 
-// Error Handler
 app.addEventListener("error", (evt) => {
   console.error("Server error:", evt.error);
 });
 
-// Start Server
+// Запуск сервера
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 await app.listen({ port });
