@@ -148,7 +148,7 @@ router.get("/user/:userId", async (ctx) => {
     const user = (await kv.get(["users", userId])).value;
     
     if (!user) {
-      ctx.response.status = 404);
+      ctx.response.status = 404;
       ctx.response.body = { 
         success: false,
         error: "User not found" 
@@ -163,7 +163,7 @@ router.get("/user/:userId", async (ctx) => {
     };
   } catch (error) {
     console.error("Get user error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -183,7 +183,7 @@ router.get("/views/:userId/:date", async (ctx) => {
     };
   } catch (error) {
     console.error("Get views error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -199,7 +199,7 @@ router.get("/reward", async (ctx) => {
     const secret = ctx.request.url.searchParams.get("secret");
 
     if (!userId) {
-      ctx.response.status = 400);
+      ctx.response.status = 400;
       ctx.response.body = { 
         success: false,
         error: "User ID is required" 
@@ -208,7 +208,7 @@ router.get("/reward", async (ctx) => {
     }
 
     if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Invalid secret" 
@@ -218,7 +218,7 @@ router.get("/reward", async (ctx) => {
 
     const user = (await kv.get(["users", userId])).value;
     if (!user) {
-      ctx.response.status = 404);
+      ctx.response.status = 404;
       ctx.response.body = { 
         success: false,
         error: "User not found" 
@@ -230,7 +230,7 @@ router.get("/reward", async (ctx) => {
     const dailyViews = (await kv.get(["views", userId, today])).value || 0;
 
     if (dailyViews >= CONFIG.DAILY_LIMIT) {
-      ctx.response.status = 429);
+      ctx.response.status = 429;
       ctx.response.body = { 
         success: false,
         error: "Daily limit reached" 
@@ -252,7 +252,7 @@ router.get("/reward", async (ctx) => {
     };
   } catch (error) {
     console.error("Reward error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -268,7 +268,7 @@ router.post("/withdraw", async (ctx) => {
     const user = (await kv.get(["users", userId])).value;
 
     if (!user) {
-      ctx.response.status = 404);
+      ctx.response.status = 404;
       ctx.response.body = { 
         success: false,
         error: "User not found" 
@@ -277,7 +277,7 @@ router.post("/withdraw", async (ctx) => {
     }
 
     if (!wallet || !amount) {
-      ctx.response.status = 400);
+      ctx.response.status = 400;
       ctx.response.body = { 
         success: false,
         error: "Wallet and amount are required" 
@@ -286,7 +286,7 @@ router.post("/withdraw", async (ctx) => {
     }
 
     if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-      ctx.response.status = 400);
+      ctx.response.status = 400;
       ctx.response.body = { 
         success: false,
         error: "Invalid withdrawal amount" 
@@ -312,7 +312,7 @@ router.post("/withdraw", async (ctx) => {
     };
   } catch (error) {
     console.error("Withdraw error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -340,7 +340,7 @@ router.get("/tasks", async (ctx) => {
     };
   } catch (error) {
     console.error("Get tasks error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -358,7 +358,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     const user = (await kv.get(["users", userId])).value;
     
     if (!user) {
-      ctx.response.status = 404);
+      ctx.response.status = 404;
       ctx.response.body = { 
         success: false,
         error: "User not found" 
@@ -367,7 +367,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     }
     
     if (!taskId) {
-      ctx.response.status = 400);
+      ctx.response.status = 400;
       ctx.response.body = { 
         success: false,
         error: "Task ID is required" 
@@ -377,7 +377,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     
     const completedTasks = user.completedTasks || [];
     if (completedTasks.includes(taskId)) {
-      ctx.response.status = 400);
+      ctx.response.status = 400;
       ctx.response.body = { 
         success: false,
         error: "Task already completed" 
@@ -407,7 +407,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     }
     
     if (!task) {
-      ctx.response.status = 404);
+      ctx.response.status = 404;
       ctx.response.body = { 
         success: false,
         error: "Task not found" 
@@ -431,7 +431,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     };
   } catch (error) {
     console.error("Complete task error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -450,7 +450,7 @@ router.post("/admin/login", async (ctx) => {
         token: "admin_" + generateId() 
       };
     } else {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Wrong password" 
@@ -458,7 +458,7 @@ router.post("/admin/login", async (ctx) => {
     }
   } catch (error) {
     console.error("Admin login error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -472,7 +472,7 @@ router.get("/admin/withdrawals", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -490,7 +490,7 @@ router.get("/admin/withdrawals", async (ctx) => {
     };
   } catch (error) {
     console.error("Get withdrawals error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -503,7 +503,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -515,7 +515,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
     const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
 
     if (!withdrawal) {
-      ctx.response.status = 404);
+      ctx.response.status = 404;
       ctx.response.body = { 
         success: false,
         error: "Not found" 
@@ -534,7 +534,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
     };
   } catch (error) {
     console.error("Process withdrawal error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -548,7 +548,7 @@ router.get("/admin/tasks", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -567,7 +567,7 @@ router.get("/admin/tasks", async (ctx) => {
     };
   } catch (error) {
     console.error("Get tasks error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -580,7 +580,7 @@ router.post("/admin/tasks", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -608,7 +608,7 @@ router.post("/admin/tasks", async (ctx) => {
     };
   } catch (error) {
     console.error("Add task error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -621,7 +621,7 @@ router.delete("/admin/tasks/:id", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -635,7 +635,7 @@ router.delete("/admin/tasks/:id", async (ctx) => {
     };
   } catch (error) {
     console.error("Delete task error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -649,7 +649,7 @@ router.get("/admin/custom-tasks", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -668,7 +668,7 @@ router.get("/admin/custom-tasks", async (ctx) => {
     };
   } catch (error) {
     console.error("Get custom tasks error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -681,7 +681,7 @@ router.post("/admin/custom-tasks", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -709,7 +709,7 @@ router.post("/admin/custom-tasks", async (ctx) => {
     };
   } catch (error) {
     console.error("Add custom task error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -722,7 +722,7 @@ router.delete("/admin/custom-tasks/:id", async (ctx) => {
   try {
     const authHeader = ctx.request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401);
+      ctx.response.status = 401;
       ctx.response.body = { 
         success: false,
         error: "Unauthorized" 
@@ -736,7 +736,7 @@ router.delete("/admin/custom-tasks/:id", async (ctx) => {
     };
   } catch (error) {
     console.error("Delete custom task error:", error);
-    ctx.response.status = 500);
+    ctx.response.status = 500;
     ctx.response.body = { 
       success: false,
       error: "Internal server error",
@@ -764,7 +764,7 @@ router.get("/", (ctx) => {
 
 // Обработка ошибок
 app.use(async (ctx) => {
-  ctx.response.status = 404);
+  ctx.response.status = 404;
   ctx.response.body = { 
     success: false,
     error: "Not found" 
