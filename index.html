@@ -481,7 +481,7 @@
         </div>
 
         <div class="referral-link-container">
-          <div id="referral-link">https://t.me/Ad_Rew_ards_bot?start=YOUR_CODE</div>
+          <div id="referral-link"></div>
         </div>
         <button class="btn" onclick="copyReferralLink()">
           <span>📋</span> Копировать ссылку
@@ -564,6 +564,7 @@
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15
+      // Пароль админа удален из фронтенда
     };
 
     const state = {
@@ -579,12 +580,14 @@
       tasks: []
     };
 
-    // Функция инициализации пользователя
+    // Функция инициализации пользователя с улучшенной обработкой ошибок
     async function initUser() {
       try {
         state.userId = localStorage.getItem('userId');
+        console.log('Current userId:', state.userId);
         
         if (!state.userId) {
+          console.log('Registering new user...');
           const refCode = new URLSearchParams(window.location.search).get('ref');
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
@@ -597,10 +600,17 @@
           
           if (!response.ok) {
             const error = await response.text();
+            console.error('Registration failed:', error);
             throw new Error(error || 'Ошибка регистрации');
           }
           
           const data = await response.json();
+          console.log('Registration data:', data);
+          
+          if (!data.userId) {
+            throw new Error('Неверный ответ сервера: отсутствует userId');
+          }
+          
           state.userId = data.userId;
           state.referralCode = data.refCode;
           localStorage.setItem('userId', state.userId);
@@ -614,6 +624,7 @@
       } catch (error) {
         console.error("Ошибка инициализации:", error);
         
+        // При ошибке "User not found" очищаем localStorage и пробуем снова
         if (error.message.includes("not found")) {
           localStorage.removeItem('userId');
           state.userId = null;
@@ -632,21 +643,26 @@
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
         
         if (response.status === 404) {
+          console.error("User not found, clearing local storage");
           localStorage.removeItem('userId');
           state.userId = null;
-          await initUser();
+          await initUser(); // Повторная попытка регистрации
           return;
         }
         
         if (!response.ok) {
-          throw new Error('Ошибка загрузки данных пользователя');
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Ошибка загрузки данных пользователя');
         }
         
         const userData = await response.json();
+        
+        // Получаем статистику просмотров за сегодня
         const today = new Date().toISOString().split('T')[0];
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
         const statsData = statsResponse.ok ? await statsResponse.json() : 0;
         
+        // Обновляем состояние
         state.balance = userData.balance || 0;
         state.referrals = userData.refCount || 0;
         state.referralEarnings = userData.refEarnings || 0;
@@ -681,7 +697,8 @@
         const response = await fetch(url);
         
         if (!response.ok) {
-          throw new Error("Ошибка при просмотре рекламы");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка при просмотре рекламы");
         }
 
         const result = await response.json();
@@ -710,7 +727,7 @@
         return;
       }
 
-      if (isNaN(amount) {
+      if (isNaN(amount)) {
         showError("Введите корректную сумму");
         return;
       }
@@ -740,7 +757,8 @@
         });
 
         if (!response.ok) {
-          throw new Error("Ошибка вывода");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка вывода");
         }
 
         const result = await response.json();
@@ -757,9 +775,9 @@
       }
     }
 
-    // Функция копирования реферальной ссылки (ОБНОВЛЕНА)
+    // Функция копирования реферальной ссылки
     function copyReferralLink() {
-      const link = `https://t.me/Ad_Rew_ards_bot?start=${state.referralCode}`;
+      const link = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
       navigator.clipboard.writeText(link).then(() => {
         showNotification("Ссылка скопирована!");
       }).catch(err => {
@@ -773,7 +791,8 @@
       try {
         const response = await fetch(`${CONFIG.apiUrl}/tasks`);
         if (!response.ok) {
-          throw new Error("Ошибка загрузки заданий");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка загрузки заданий");
         }
         
         state.tasks = await response.json();
@@ -850,7 +869,8 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка выполнения задания");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка выполнения задания");
         }
         
         const result = await response.json();
@@ -875,6 +895,7 @@
       document.getElementById('admin-password').value = '';
     }
 
+    // Проверка пароля админа (без хранения пароля во фронтенде)
     async function checkAdminPassword() {
       const password = document.getElementById('admin-password').value;
       
@@ -889,7 +910,8 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка авторизации");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка авторизации");
         }
 
         const data = await response.json();
@@ -918,6 +940,7 @@
       document.getElementById('admin-panel').classList.add('hidden');
     }
 
+    // Загрузка заявок на вывод (админ)
     async function loadWithdrawals(filter = 'pending') {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
@@ -928,7 +951,8 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка загрузки заявок");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка загрузки заявок");
         }
         
         const allWithdrawals = await response.json();
@@ -944,6 +968,7 @@
       }
     }
 
+    // Отображение заявок на вывод (админ)
     function renderWithdrawals(withdrawals, filter) {
       const container = document.getElementById('withdrawals-list');
       container.innerHTML = '';
@@ -990,6 +1015,7 @@
       });
     }
 
+    // Обработка заявки на вывод (админ)
     async function processWithdrawal(id, status) {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
@@ -1003,7 +1029,8 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка обработки заявки");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка обработки заявки");
         }
         
         showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
@@ -1014,6 +1041,7 @@
       }
     }
 
+    // Загрузка заданий (админ)
     async function loadAdminTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
@@ -1024,7 +1052,8 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка загрузки заданий");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка загрузки заданий");
         }
         
         state.tasks = await response.json();
@@ -1039,6 +1068,7 @@
       }
     }
 
+    // Отображение заданий (админ)
     function renderAdminTasks() {
       const container = document.getElementById('current-tasks');
       container.innerHTML = '';
@@ -1075,6 +1105,7 @@
       });
     }
 
+    // Добавление задания (админ)
     async function addTask() {
       const title = document.getElementById('new-task-title').value.trim();
       const reward = parseFloat(document.getElementById('new-task-reward').value);
@@ -1099,13 +1130,15 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка добавления задания");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка добавления задания");
         }
         
         const newTask = await response.json();
         state.tasks.push(newTask);
         renderAdminTasks();
         
+        // Очистка формы
         document.getElementById('new-task-title').value = '';
         document.getElementById('new-task-reward').value = '';
         document.getElementById('new-task-desc').value = '';
@@ -1119,6 +1152,7 @@
       }
     }
 
+    // Удаление задания (админ)
     async function deleteTask(taskId) {
       if (!confirm("Удалить это задание?")) return;
       
@@ -1132,7 +1166,8 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка удаления задания");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Ошибка удаления задания");
         }
         
         state.tasks = state.tasks.filter(t => t.id !== taskId);
@@ -1165,9 +1200,7 @@
       document.getElementById('referral-count').textContent = state.referrals;
       document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
       document.getElementById('referral-code-display').textContent = state.referralCode;
-      
-      // ОБНОВЛЕННАЯ РЕФЕРАЛЬНАЯ ССЫЛКА
-      document.getElementById('referral-link').textContent = `https://t.me/Ad_Rew_ards_bot?start=${state.referralCode}`;
+      document.getElementById('referral-link').textContent = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
       
       document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
     }
@@ -1212,8 +1245,10 @@
             initUser();
           });
           
+          // Секретная кнопка админа
           document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
           
+          // Горячая клавиша для админа (Ctrl+Alt+A)
           document.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.altKey && e.key === 'a') {
               showAdminLogin();
