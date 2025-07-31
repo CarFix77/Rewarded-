@@ -1,6 +1,5 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
-import { cron } from "https://deno.land/x/deno_cron@v1.0.0/cron.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -15,12 +14,6 @@ const CONFIG = {
     LIKE: 0.05,
     RETWEET: 0.07,
     COMMENT: 0.15
-  },
-  // Настройки очистки данных
-  CLEANUP: {
-    VIEWS_DAYS_TO_KEEP: 30, // Хранить статистику просмотров 30 дней
-    COMPLETED_TASKS_DAYS_TO_KEEP: 90, // Хранить историю выполненных заданий 90 дней
-    INACTIVE_USERS_DAYS: 365 // Удалять неактивных пользователей через год
   }
 };
 
@@ -41,81 +34,59 @@ app.use(async (ctx, next) => {
   await next();
 });
 
+app.use(router.routes());
+app.use(router.allowedMethods());
+
 // Генерация ID
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Функция очистки старых данных
+// Функция для очистки старых данных
 async function cleanupOldData() {
-  console.log("Starting data cleanup...");
-  
   try {
-    // Очистка старых просмотров
-    const viewsCutoffDate = new Date();
-    viewsCutoffDate.setDate(viewsCutoffDate.getDate() - CONFIG.CLEANUP.VIEWS_DAYS_TO_KEEP);
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
     
-    let deletedViews = 0;
+    // Очистка старых просмотров (храним только последние 7 дней)
     for await (const entry of kv.list({ prefix: ["views"] })) {
-      const dateString = entry.key[2];
-      const entryDate = new Date(dateString);
-      
-      if (entryDate < viewsCutoffDate) {
+      const date = entry.key[2];
+      if (date < new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0]) {
         await kv.delete(entry.key);
-        deletedViews++;
       }
     }
-    console.log(`Deleted ${deletedViews} old view records`);
     
-    // Очистка выполненных заданий у неактивных пользователей
-    const tasksCutoffDate = new Date();
-    tasksCutoffDate.setDate(tasksCutoffDate.getDate() - CONFIG.CLEANUP.COMPLETED_TASKS_DAYS_TO_KEEP);
-    
-    let updatedUsers = 0;
+    // Очистка неактивных пользователей (не активны более 30 дней)
     for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.completedTasks && entry.value.completedTasks.length > 0) {
-        const lastActiveDate = new Date(entry.value.lastActive || entry.value.createdAt);
-        
-        if (lastActiveDate < tasksCutoffDate) {
-          await kv.set(entry.key, {
-            ...entry.value,
-            completedTasks: []
-          });
-          updatedUsers++;
+      if (entry.value.createdAt < thirtyDaysAgo) {
+        // Проверяем активность (баланс и последние действия)
+        if (entry.value.balance < 0.01) {
+          await kv.delete(entry.key);
+          
+          // Удаляем связанные данные пользователя
+          for await (const viewEntry of kv.list({ prefix: ["views", entry.key[1]] })) {
+            await kv.delete(viewEntry.key);
+          }
         }
       }
     }
-    console.log(`Cleared completed tasks for ${updatedUsers} inactive users`);
     
-    // Удаление неактивных пользователей
-    const usersCutoffDate = new Date();
-    usersCutoffDate.setDate(usersCutoffDate.getDate() - CONFIG.CLEANUP.INACTIVE_USERS_DAYS);
-    
-    let deletedUsers = 0;
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      const lastActiveDate = new Date(entry.value.lastActive || entry.value.createdAt);
-      
-      if (lastActiveDate < usersCutoffDate) {
-        // Удаляем пользователя и связанные данные
-        await kv.atomic()
-          .delete(entry.key)
-          .delete(["views", entry.key[1]])
-          .commit();
-        deletedUsers++;
+    // Очистка завершенных выводов (старше 30 дней)
+    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+      if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
+        await kv.delete(entry.key);
       }
     }
-    console.log(`Deleted ${deletedUsers} inactive users`);
     
+    console.log("Cleanup completed");
   } catch (error) {
-    console.error("Error during data cleanup:", error);
+    console.error("Cleanup error:", error);
   }
 }
 
-// Запускаем очистку каждые 24 часа
-cron("0 0 * * *", cleanupOldData);
-
-// Запускаем очистку сразу при старте сервера
-cleanupOldData().catch(console.error);
+// Запускаем очистку при старте и затем каждые 24 часа
+cleanupOldData();
+setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 
 // Регистрация пользователя
 router.post("/register", async (ctx) => {
@@ -123,7 +94,6 @@ router.post("/register", async (ctx) => {
     const { refCode } = await ctx.request.body().value;
     const userId = `user_${generateId()}`;
     const userRefCode = generateId().toString();
-    const now = new Date().toISOString();
 
     await kv.set(["users", userId], {
       balance: 0,
@@ -131,8 +101,7 @@ router.post("/register", async (ctx) => {
       refCount: 0,
       refEarnings: 0,
       completedTasks: [],
-      createdAt: now,
-      lastActive: now
+      createdAt: new Date().toISOString()
     });
 
     // Реферальный бонус
@@ -144,8 +113,7 @@ router.post("/register", async (ctx) => {
             ...entry.value,
             refCount: entry.value.refCount + 1,
             refEarnings: entry.value.refEarnings + bonus,
-            balance: entry.value.balance + bonus,
-            lastActive: now
+            balance: entry.value.balance + bonus
           });
           break;
         }
@@ -175,13 +143,6 @@ router.get("/user/:userId", async (ctx) => {
       ctx.response.body = { error: "User not found" };
       return;
     }
-    
-    // Обновляем время последней активности
-    const now = new Date().toISOString();
-    await kv.set(["users", userId], {
-      ...user,
-      lastActive: now
-    });
     
     ctx.response.body = {
       ...user,
@@ -230,14 +191,8 @@ router.get("/reward", async (ctx) => {
     }
 
     const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-    const now = new Date().toISOString();
-    
     await kv.atomic()
-      .set(["users", userId], { 
-        ...user, 
-        balance: newBalance,
-        lastActive: now
-      })
+      .set(["users", userId], { ...user, balance: newBalance })
       .set(["views", userId, today], dailyViews + 1)
       .commit();
 
@@ -273,19 +228,13 @@ router.post("/withdraw", async (ctx) => {
     }
 
     const withdrawId = `wd_${generateId()}`;
-    const now = new Date().toISOString();
-    
     await kv.atomic()
-      .set(["users", userId], { 
-        ...user, 
-        balance: user.balance - amount,
-        lastActive: now
-      })
+      .set(["users", userId], { ...user, balance: user.balance - amount })
       .set(["withdrawals", withdrawId], {
         userId,
         amount,
         wallet,
-        date: now,
+        date: new Date().toISOString(),
         status: "pending"
       })
       .commit();
@@ -385,13 +334,11 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     
     const newBalance = user.balance + task.reward;
     const newCompletedTasks = [...completedTasks, taskId];
-    const now = new Date().toISOString();
     
     await kv.set(["users", userId], {
       ...user,
       balance: newBalance,
-      completedTasks: newCompletedTasks,
-      lastActive: now
+      completedTasks: newCompletedTasks
     });
     
     ctx.response.body = {
@@ -507,18 +454,6 @@ router.delete("/admin/tasks/:id", async (ctx) => {
   try {
     await kv.delete(["custom_tasks", ctx.params.id]);
     ctx.response.body = { success: true };
-  } catch (error) {
-    console.error("Error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { error: "Internal server error" };
-  }
-});
-
-// Ручная очистка данных (админ)
-router.post("/admin/cleanup", async (ctx) => {
-  try {
-    await cleanupOldData();
-    ctx.response.body = { success: true, message: "Data cleanup completed" };
   } catch (error) {
     console.error("Error:", error);
     ctx.response.status = 500;
