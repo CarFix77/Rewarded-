@@ -1,5 +1,6 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
+import { cron } from "https://deno.land/x/deno_cron@v1.0.0/cron.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -15,76 +16,106 @@ const CONFIG = {
     RETWEET: 0.07,
     COMMENT: 0.15
   },
-  DATA_RETENTION_DAYS: 60
+  // Настройки очистки данных
+  CLEANUP: {
+    VIEWS_DAYS_TO_KEEP: 30, // Хранить статистику просмотров 30 дней
+    COMPLETED_TASKS_DAYS_TO_KEEP: 90, // Хранить историю выполненных заданий 90 дней
+    INACTIVE_USERS_DAYS: 365 // Удалять неактивных пользователей через год
+  }
 };
 
 const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
-// Функция очистки старых данных
-async function cleanupOldData() {
-  try {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - CONFIG.DATA_RETENTION_DAYS);
-
-    console.log(`[Cleanup] Removing data older than ${cutoffDate.toISOString()}`);
-
-    // Удаление старых пользователей
-    let deletedUsers = 0;
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (new Date(entry.value.createdAt) < cutoffDate && 
-          entry.value.balance === 0 && 
-          entry.value.refCount === 0) {
-        await kv.delete(entry.key);
-        deletedUsers++;
-      }
-    }
-
-    // Удаление старых выводов
-    let deletedWithdrawals = 0;
-    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-      if (new Date(entry.value.date) < cutoffDate && 
-          ["completed", "rejected"].includes(entry.value.status)) {
-        await kv.delete(entry.key);
-        deletedWithdrawals++;
-      }
-    }
-
-    // Удаление старой статистики просмотров
-    let deletedViews = 0;
-    for await (const entry of kv.list({ prefix: ["views"] })) {
-      const dateStr = entry.key[2];
-      if (new Date(dateStr) < cutoffDate) {
-        await kv.delete(entry.key);
-        deletedViews++;
-      }
-    }
-
-    console.log(`[Cleanup] Deleted: Users=${deletedUsers}, Withdrawals=${deletedWithdrawals}, Views=${deletedViews}`);
-  } catch (error) {
-    console.error("Cleanup error:", error);
-  }
-}
-
-// Middleware
+// Настройка CORS
 app.use(oakCors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
+// Логирование запросов
 app.use(async (ctx, next) => {
-  const start = Date.now();
+  console.log(`${ctx.request.method} ${ctx.request.url.pathname}`);
   await next();
-  const ms = Date.now() - start;
-  console.log(`${ctx.request.method} ${ctx.request.url.pathname} - ${ms}ms`);
 });
 
 // Генерация ID
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
+
+// Функция очистки старых данных
+async function cleanupOldData() {
+  console.log("Starting data cleanup...");
+  
+  try {
+    // Очистка старых просмотров
+    const viewsCutoffDate = new Date();
+    viewsCutoffDate.setDate(viewsCutoffDate.getDate() - CONFIG.CLEANUP.VIEWS_DAYS_TO_KEEP);
+    
+    let deletedViews = 0;
+    for await (const entry of kv.list({ prefix: ["views"] })) {
+      const dateString = entry.key[2];
+      const entryDate = new Date(dateString);
+      
+      if (entryDate < viewsCutoffDate) {
+        await kv.delete(entry.key);
+        deletedViews++;
+      }
+    }
+    console.log(`Deleted ${deletedViews} old view records`);
+    
+    // Очистка выполненных заданий у неактивных пользователей
+    const tasksCutoffDate = new Date();
+    tasksCutoffDate.setDate(tasksCutoffDate.getDate() - CONFIG.CLEANUP.COMPLETED_TASKS_DAYS_TO_KEEP);
+    
+    let updatedUsers = 0;
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      if (entry.value.completedTasks && entry.value.completedTasks.length > 0) {
+        const lastActiveDate = new Date(entry.value.lastActive || entry.value.createdAt);
+        
+        if (lastActiveDate < tasksCutoffDate) {
+          await kv.set(entry.key, {
+            ...entry.value,
+            completedTasks: []
+          });
+          updatedUsers++;
+        }
+      }
+    }
+    console.log(`Cleared completed tasks for ${updatedUsers} inactive users`);
+    
+    // Удаление неактивных пользователей
+    const usersCutoffDate = new Date();
+    usersCutoffDate.setDate(usersCutoffDate.getDate() - CONFIG.CLEANUP.INACTIVE_USERS_DAYS);
+    
+    let deletedUsers = 0;
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      const lastActiveDate = new Date(entry.value.lastActive || entry.value.createdAt);
+      
+      if (lastActiveDate < usersCutoffDate) {
+        // Удаляем пользователя и связанные данные
+        await kv.atomic()
+          .delete(entry.key)
+          .delete(["views", entry.key[1]])
+          .commit();
+        deletedUsers++;
+      }
+    }
+    console.log(`Deleted ${deletedUsers} inactive users`);
+    
+  } catch (error) {
+    console.error("Error during data cleanup:", error);
+  }
+}
+
+// Запускаем очистку каждые 24 часа
+cron("0 0 * * *", cleanupOldData);
+
+// Запускаем очистку сразу при старте сервера
+cleanupOldData().catch(console.error);
 
 // Регистрация пользователя
 router.post("/register", async (ctx) => {
@@ -104,6 +135,7 @@ router.post("/register", async (ctx) => {
       lastActive: now
     });
 
+    // Реферальный бонус
     if (refCode) {
       for await (const entry of kv.list({ prefix: ["users"] })) {
         if (entry.value.refCode === refCode) {
@@ -126,7 +158,7 @@ router.post("/register", async (ctx) => {
       refLink: `${ctx.request.url.origin}?ref=${userRefCode}`
     };
   } catch (error) {
-    console.error("Registration error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -145,9 +177,10 @@ router.get("/user/:userId", async (ctx) => {
     }
     
     // Обновляем время последней активности
+    const now = new Date().toISOString();
     await kv.set(["users", userId], {
       ...user,
-      lastActive: new Date().toISOString()
+      lastActive: now
     });
     
     ctx.response.body = {
@@ -155,7 +188,20 @@ router.get("/user/:userId", async (ctx) => {
       completedTasks: user.completedTasks || []
     };
   } catch (error) {
-    console.error("User fetch error:", error);
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Получение статистики просмотров
+router.get("/views/:userId/:date", async (ctx) => {
+  try {
+    const { userId, date } = ctx.params;
+    const views = (await kv.get(["views", userId, date])).value || 0;
+    ctx.response.body = views;
+  } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -174,9 +220,8 @@ router.get("/reward", async (ctx) => {
     }
 
     const today = new Date().toISOString().split("T")[0];
-    const [userRes, viewsRes] = await kv.getMany([["users", userId], ["views", userId, today]]);
-    const user = userRes.value || { balance: 0 };
-    const dailyViews = viewsRes.value || 0;
+    const user = (await kv.get(["users", userId])).value || { balance: 0 };
+    const dailyViews = (await kv.get(["views", userId, today])).value || 0;
 
     if (dailyViews >= CONFIG.DAILY_LIMIT) {
       ctx.response.status = 429;
@@ -186,9 +231,13 @@ router.get("/reward", async (ctx) => {
 
     const newBalance = user.balance + CONFIG.REWARD_PER_AD;
     const now = new Date().toISOString();
-
+    
     await kv.atomic()
-      .set(["users", userId], { ...user, balance: newBalance, lastActive: now })
+      .set(["users", userId], { 
+        ...user, 
+        balance: newBalance,
+        lastActive: now
+      })
       .set(["views", userId, today], dailyViews + 1)
       .commit();
 
@@ -199,7 +248,7 @@ router.get("/reward", async (ctx) => {
       viewsToday: dailyViews + 1
     };
   } catch (error) {
-    console.error("Reward error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -225,9 +274,13 @@ router.post("/withdraw", async (ctx) => {
 
     const withdrawId = `wd_${generateId()}`;
     const now = new Date().toISOString();
-
+    
     await kv.atomic()
-      .set(["users", userId], { ...user, balance: user.balance - amount, lastActive: now })
+      .set(["users", userId], { 
+        ...user, 
+        balance: user.balance - amount,
+        lastActive: now
+      })
       .set(["withdrawals", withdrawId], {
         userId,
         amount,
@@ -239,7 +292,7 @@ router.post("/withdraw", async (ctx) => {
 
     ctx.response.body = { success: true, withdrawId };
   } catch (error) {
-    console.error("Withdrawal error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -248,6 +301,7 @@ router.post("/withdraw", async (ctx) => {
 // Задания
 router.get("/tasks", async (ctx) => {
   try {
+    // Стандартные задания
     const defaultTasks = [
       {
         id: "follow_twitter",
@@ -283,6 +337,7 @@ router.get("/tasks", async (ctx) => {
       }
     ];
 
+    // Кастомные задания из KV
     const customTasks = [];
     for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
       customTasks.push(entry.value);
@@ -290,7 +345,7 @@ router.get("/tasks", async (ctx) => {
 
     ctx.response.body = [...defaultTasks, ...customTasks];
   } catch (error) {
-    console.error("Tasks error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -317,8 +372,10 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       return;
     }
     
-    // Получаем задание из кеша
-    const task = [...defaultTasks, ...customTasks].find(t => t.id === taskId);
+    // Находим задание
+    const tasksResponse = await fetch(`${ctx.request.url.origin}/tasks`);
+    const tasks = await tasksResponse.json();
+    const task = tasks.find(t => t.id === taskId);
     
     if (!task) {
       ctx.response.status = 404;
@@ -342,7 +399,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       completedTasks: newCompletedTasks
     };
   } catch (error) {
-    console.error("Complete task error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -362,7 +419,7 @@ router.post("/admin/login", async (ctx) => {
       ctx.response.body = { error: "Wrong password" };
     }
   } catch (error) {
-    console.error("Admin login error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -376,7 +433,7 @@ router.get("/admin/withdrawals", async (ctx) => {
     }
     ctx.response.body = withdrawals;
   } catch (error) {
-    console.error("Withdrawals fetch error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -401,7 +458,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
 
     ctx.response.body = { success: true };
   } catch (error) {
-    console.error("Withdrawal update error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -417,7 +474,7 @@ router.get("/admin/tasks", async (ctx) => {
     
     ctx.response.body = customTasks;
   } catch (error) {
-    console.error("Admin tasks error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -440,7 +497,7 @@ router.post("/admin/tasks", async (ctx) => {
     
     ctx.response.body = { id: taskId };
   } catch (error) {
-    console.error("Task creation error:", error);
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -451,7 +508,19 @@ router.delete("/admin/tasks/:id", async (ctx) => {
     await kv.delete(["custom_tasks", ctx.params.id]);
     ctx.response.body = { success: true };
   } catch (error) {
-    console.error("Task deletion error:", error);
+    console.error("Error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Ручная очистка данных (админ)
+router.post("/admin/cleanup", async (ctx) => {
+  try {
+    await cleanupOldData();
+    ctx.response.body = { success: true, message: "Data cleanup completed" };
+  } catch (error) {
+    console.error("Error:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -483,10 +552,7 @@ app.addEventListener("error", (evt) => {
   console.error("Server error:", evt.error);
 });
 
-// Запуск сервера и очистки
-cleanupOldData();
-setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
-
+// Запуск сервера
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 await app.listen({ port });
