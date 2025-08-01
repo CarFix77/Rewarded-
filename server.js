@@ -4,7 +4,6 @@ import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
-  WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
@@ -15,20 +14,20 @@ const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
-// Настройка CORS
+// CORS Middleware
 app.use(oakCors({
   origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"]
 }));
 
-// Логирование запросов
+// Logging Middleware
 app.use(async (ctx, next) => {
   console.log(`${ctx.request.method} ${ctx.request.url.pathname}`);
   await next();
 });
 
-// Парсинг JSON тела запроса
+// JSON Body Parser
 app.use(async (ctx, next) => {
   if (ctx.request.hasBody) {
     try {
@@ -37,7 +36,7 @@ app.use(async (ctx, next) => {
         ctx.state.body = await body.value;
       }
     } catch (err) {
-      console.error("Error parsing body:", err);
+      console.error("Body parse error:", err);
     }
   }
   await next();
@@ -46,255 +45,150 @@ app.use(async (ctx, next) => {
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-// Генерация ID
+// Helper Functions
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Функция для очистки старых данных
-async function cleanupOldData() {
-  try {
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
-    
-    for await (const entry of kv.list({ prefix: ["views"] })) {
-      const date = entry.key[2];
-      if (date < new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0]) {
-        await kv.delete(entry.key);
-      }
-    }
-    
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.createdAt < thirtyDaysAgo) {
-        if (entry.value.balance < 0.01) {
-          await kv.delete(entry.key);
-          for await (const viewEntry of kv.list({ prefix: ["views", entry.key[1]] })) {
-            await kv.delete(viewEntry.key);
-          }
-        }
-      }
-    }
-    
-    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-      if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
-        await kv.delete(entry.key);
-      }
-    }
-    
-    console.log("Cleanup completed");
-  } catch (error) {
-    console.error("Cleanup error:", error);
-  }
-}
+// API Endpoints
 
-// Запускаем очистку при старте и затем каждые 24 часа
-cleanupOldData();
-setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
+// Health Check
+router.get("/", (ctx) => {
+  ctx.response.body = { 
+    status: "running",
+    endpoints: {
+      register: "POST /register",
+      reward: "GET /reward?userid=ID&secret=KEY",
+      user: "GET /user/USER_ID",
+      withdraw: "POST /withdraw"
+    }
+  };
+});
 
-// Регистрация пользователя
+// User Registration
 router.post("/register", async (ctx) => {
   try {
-    const { refCode } = ctx.state.body || {};
     const userId = `user_${generateId()}`;
-    const userRefCode = generateId().toString();
-
-    const userData = {
+    const refCode = generateId().toString();
+    
+    await kv.set(["users", userId], {
       balance: 0,
-      refCode: userRefCode,
+      refCode,
       refCount: 0,
       refEarnings: 0,
-      completedTasks: [],
       createdAt: new Date().toISOString()
-    };
-
-    await kv.set(["users", userId], userData);
-
-    if (refCode) {
-      for await (const entry of kv.list({ prefix: ["users"] })) {
-        if (entry.value.refCode === refCode) {
-          const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-          await kv.set(entry.key, {
-            ...entry.value,
-            refCount: entry.value.refCount + 1,
-            refEarnings: entry.value.refEarnings + bonus,
-            balance: entry.value.balance + bonus
-          });
-          break;
-        }
-      }
-    }
+    });
 
     ctx.response.body = {
       success: true,
       userId,
-      refCode: userRefCode,
-      refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
+      refCode,
+      refLink: `https://t.me/Ad_Rew_ards_bot?start=${refCode}`
     };
   } catch (error) {
-    console.error("Registration error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
+    ctx.response.status = 500);
+    ctx.response.body = { success: false, error: "Registration failed" };
   }
 });
 
-// Получение информации о пользователе
+// Get User Info
 router.get("/user/:userId", async (ctx) => {
   try {
-    const userId = ctx.params.userId;
-    const user = (await kv.get(["users", userId])).value;
-    
+    const user = (await kv.get(["users", ctx.params.userId])).value;
     if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { 
-        success: false,
-        error: "User not found" 
-      };
+      ctx.response.status = 404);
+      ctx.response.body = { success: false, error: "User not found" };
       return;
     }
-    
-    ctx.response.body = {
-      success: true,
-      ...user,
-      completedTasks: user.completedTasks || []
-    };
+    ctx.response.body = { success: true, ...user };
   } catch (error) {
-    console.error("Get user error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
+    ctx.response.status = 500);
+    ctx.response.body = { success: false, error: "Server error" };
   }
 });
 
-// Получение статистики просмотров
-router.get("/views/:userId/:date", async (ctx) => {
-  try {
-    const { userId, date } = ctx.params;
-    const views = (await kv.get(["views", userId, date])).value || 0;
-    ctx.response.body = {
-      success: true,
-      views
-    };
-  } catch (error) {
-    console.error("Get views error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-// Reward endpoint
+// Reward Processing
 router.get("/reward", async (ctx) => {
   try {
     const userId = ctx.request.url.searchParams.get("userid");
     const secret = ctx.request.url.searchParams.get("secret");
 
-    if (!userId) {
-      ctx.response.status = 400;
-      ctx.response.body = { 
-        success: false,
-        error: "User ID is required" 
-      };
+    // Input validation
+    if (!userId || !secret) {
+      ctx.response.status = 400);
+      ctx.response.body = { success: false, error: "Missing parameters" };
       return;
     }
 
-    if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Invalid secret" 
-      };
+    if (secret !== CONFIG.SECRET_KEY) {
+      ctx.response.status = 401);
+      ctx.response.body = { success: false, error: "Invalid secret" };
       return;
     }
 
     const user = (await kv.get(["users", userId])).value;
     if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { 
-        success: false,
-        error: "User not found" 
-      };
+      ctx.response.status = 404);
+      ctx.response.body = { success: false, error: "User not found" };
       return;
     }
 
     const today = new Date().toISOString().split("T")[0];
-    const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+    const viewsToday = (await kv.get(["views", userId, today])).value || 0;
 
-    if (dailyViews >= CONFIG.DAILY_LIMIT) {
-      ctx.response.status = 429;
-      ctx.response.body = { 
-        success: false,
-        error: "Daily limit reached" 
-      };
+    if (viewsToday >= CONFIG.DAILY_LIMIT) {
+      ctx.response.status = 429);
+      ctx.response.body = { success: false, error: "Daily limit reached" };
       return;
     }
 
     const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+    
+    // Atomic update
     await kv.atomic()
       .set(["users", userId], { ...user, balance: newBalance })
-      .set(["views", userId, today], dailyViews + 1)
+      .set(["views", userId, today], viewsToday + 1)
       .commit();
 
     ctx.response.body = {
       success: true,
       reward: CONFIG.REWARD_PER_AD,
       balance: newBalance,
-      viewsToday: dailyViews + 1
+      viewsToday: viewsToday + 1
     };
   } catch (error) {
-    console.error("Reward error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
+    ctx.response.status = 500);
+    ctx.response.body = { success: false, error: "Reward processing failed" };
   }
 });
 
-// Вывод средств
+// Withdrawal Request
 router.post("/withdraw", async (ctx) => {
   try {
     const { userId, wallet, amount } = ctx.state.body || {};
-    const user = (await kv.get(["users", userId])).value;
-
-    if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { 
-        success: false,
-        error: "User not found" 
-      };
+    
+    // Input validation
+    if (!userId || !wallet || !amount) {
+      ctx.response.status = 400);
+      ctx.response.body = { success: false, error: "Missing parameters" };
       return;
     }
 
-    if (!wallet || !amount) {
-      ctx.response.status = 400;
-      ctx.response.body = { 
-        success: false,
-        error: "Wallet and amount are required" 
-      };
+    const user = (await kv.get(["users", userId])).value;
+    if (!user) {
+      ctx.response.status = 404);
+      ctx.response.body = { success: false, error: "User not found" };
       return;
     }
 
     if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-      ctx.response.status = 400;
-      ctx.response.body = { 
-        success: false,
-        error: "Invalid withdrawal amount" 
-      };
+      ctx.response.status = 400);
+      ctx.response.body = { success: false, error: "Invalid amount" };
       return;
     }
 
     const withdrawId = `wd_${generateId()}`;
+    
     await kv.atomic()
       .set(["users", userId], { ...user, balance: user.balance - amount })
       .set(["withdrawals", withdrawId], {
@@ -307,140 +201,17 @@ router.post("/withdraw", async (ctx) => {
       .commit();
 
     ctx.response.body = { 
-      success: true, 
-      withdrawId 
-    };
-  } catch (error) {
-    console.error("Withdraw error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-// Задания
-router.get("/tasks", async (ctx) => {
-  try {
-    const tasks = [];
-    for await (const entry of kv.list({ prefix: ["tasks"] })) {
-      tasks.push(entry.value);
-    }
-    
-    const customTasks = [];
-    for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
-      customTasks.push(entry.value);
-    }
-
-    ctx.response.body = {
       success: true,
-      tasks: [...tasks, ...customTasks]
+      withdrawId,
+      newBalance: user.balance - amount
     };
   } catch (error) {
-    console.error("Get tasks error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
+    ctx.response.status = 500);
+    ctx.response.body = { success: false, error: "Withdrawal failed" };
   }
 });
 
-// Завершение задания
-router.post("/user/:userId/complete-task", async (ctx) => {
-  try {
-    const userId = ctx.params.userId;
-    const { taskId } = ctx.state.body || {};
-    
-    const user = (await kv.get(["users", userId])).value;
-    
-    if (!user) {
-      ctx.response.status = 404;
-      ctx.response.body = { 
-        success: false,
-        error: "User not found" 
-      };
-      return;
-    }
-    
-    if (!taskId) {
-      ctx.response.status = 400;
-      ctx.response.body = { 
-        success: false,
-        error: "Task ID is required" 
-      };
-      return;
-    }
-    
-    const completedTasks = user.completedTasks || [];
-    if (completedTasks.includes(taskId)) {
-      ctx.response.status = 400;
-      ctx.response.body = { 
-        success: false,
-        error: "Task already completed" 
-      };
-      return;
-    }
-    
-    // Проверяем существование задания
-    let task = null;
-    
-    // Сначала проверяем в стандартных заданиях
-    for await (const entry of kv.list({ prefix: ["tasks"] })) {
-      if (entry.value.id === taskId) {
-        task = entry.value;
-        break;
-      }
-    }
-    
-    // Если не нашли, проверяем в кастомных
-    if (!task) {
-      for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
-        if (entry.value.id === taskId) {
-          task = entry.value;
-          break;
-        }
-      }
-    }
-    
-    if (!task) {
-      ctx.response.status = 404;
-      ctx.response.body = { 
-        success: false,
-        error: "Task not found" 
-      };
-      return;
-    }
-    
-    const newBalance = user.balance + task.reward;
-    const newCompletedTasks = [...completedTasks, taskId];
-    
-    await kv.set(["users", userId], {
-      ...user,
-      balance: newBalance,
-      completedTasks: newCompletedTasks
-    });
-    
-    ctx.response.body = {
-      success: true,
-      balance: newBalance,
-      completedTasks: newCompletedTasks
-    };
-  } catch (error) {
-    console.error("Complete task error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-// Админ-панель
+// Admin Endpoints
 router.post("/admin/login", async (ctx) => {
   try {
     const { password } = ctx.state.body || {};
@@ -450,332 +221,22 @@ router.post("/admin/login", async (ctx) => {
         token: "admin_" + generateId() 
       };
     } else {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Wrong password" 
-      };
+      ctx.response.status = 401);
+      ctx.response.body = { success: false, error: "Invalid password" };
     }
   } catch (error) {
-    console.error("Admin login error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
+    ctx.response.status = 500);
+    ctx.response.body = { success: false, error: "Login failed" };
   }
 });
 
-// Управление выводом средств (админ)
-router.get("/admin/withdrawals", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    const withdrawals = [];
-    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-      withdrawals.push(entry.value);
-    }
-    ctx.response.body = {
-      success: true,
-      withdrawals
-    };
-  } catch (error) {
-    console.error("Get withdrawals error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
+// Error Handling
+app.use((ctx) => {
+  ctx.response.status = 404);
+  ctx.response.body = { success: false, error: "Endpoint not found" };
 });
 
-router.post("/admin/withdrawals/:id", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    const { status } = ctx.state.body || {};
-    const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
-
-    if (!withdrawal) {
-      ctx.response.status = 404;
-      ctx.response.body = { 
-        success: false,
-        error: "Not found" 
-      };
-      return;
-    }
-
-    await kv.set(["withdrawals", ctx.params.id], {
-      ...withdrawal,
-      status,
-      processedAt: new Date().toISOString()
-    });
-
-    ctx.response.body = { 
-      success: true 
-    };
-  } catch (error) {
-    console.error("Process withdrawal error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-// Управление стандартными заданиями (админ)
-router.get("/admin/tasks", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    const tasks = [];
-    for await (const entry of kv.list({ prefix: ["tasks"] })) {
-      tasks.push(entry.value);
-    }
-    
-    ctx.response.body = {
-      success: true,
-      tasks
-    };
-  } catch (error) {
-    console.error("Get tasks error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-router.post("/admin/tasks", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    const { title, reward, description, url, cooldown } = ctx.state.body || {};
-    const taskId = `task_${generateId()}`;
-    
-    await kv.set(["tasks", taskId], {
-      id: taskId,
-      title,
-      reward: parseFloat(reward),
-      description,
-      url,
-      cooldown: parseInt(cooldown) || 10,
-      createdAt: new Date().toISOString(),
-      type: "default"
-    });
-    
-    ctx.response.body = { 
-      success: true,
-      taskId 
-    };
-  } catch (error) {
-    console.error("Add task error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-router.delete("/admin/tasks/:id", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    await kv.delete(["tasks", ctx.params.id]);
-    ctx.response.body = { 
-      success: true 
-    };
-  } catch (error) {
-    console.error("Delete task error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-// Управление кастомными заданиями (админ)
-router.get("/admin/custom-tasks", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    const tasks = [];
-    for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
-      tasks.push(entry.value);
-    }
-    
-    ctx.response.body = {
-      success: true,
-      tasks
-    };
-  } catch (error) {
-    console.error("Get custom tasks error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-router.post("/admin/custom-tasks", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    const { title, reward, description, url, cooldown } = ctx.state.body || {};
-    const taskId = `custom_${generateId()}`;
-    
-    await kv.set(["custom_tasks", taskId], {
-      id: taskId,
-      title,
-      reward: parseFloat(reward),
-      description,
-      url,
-      cooldown: parseInt(cooldown) || 10,
-      createdAt: new Date().toISOString(),
-      type: "custom"
-    });
-    
-    ctx.response.body = { 
-      success: true,
-      taskId 
-    };
-  } catch (error) {
-    console.error("Add custom task error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-router.delete("/admin/custom-tasks/:id", async (ctx) => {
-  try {
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      ctx.response.status = 401;
-      ctx.response.body = { 
-        success: false,
-        error: "Unauthorized" 
-      };
-      return;
-    }
-
-    await kv.delete(["custom_tasks", ctx.params.id]);
-    ctx.response.body = { 
-      success: true 
-    };
-  } catch (error) {
-    console.error("Delete custom task error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false,
-      error: "Internal server error",
-      details: error.message 
-    };
-  }
-});
-
-// Статус сервера
-router.get("/", (ctx) => {
-  ctx.response.body = {
-    success: true,
-    status: "OK",
-    version: "1.0",
-    endpoints: {
-      register: "POST /register",
-      reward: "/reward?userid=USERID&secret=wagner46375",
-      withdraw: "POST /withdraw",
-      admin: "/admin/login",
-      tasks: "GET /tasks",
-      completeTask: "POST /user/:userId/complete-task"
-    }
-  };
-});
-
-// Обработка ошибок
-app.use(async (ctx) => {
-  ctx.response.status = 404;
-  ctx.response.body = { 
-    success: false,
-    error: "Not found" 
-  };
-});
-
-app.addEventListener("error", (evt) => {
-  console.error("Server error:", evt.error);
-});
-
-// Запуск сервера
+// Start Server
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 await app.listen({ port });
