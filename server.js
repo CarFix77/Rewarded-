@@ -15,14 +15,14 @@ const kv = await Deno.openKv();
 const app = new Application();
 const router = new Router();
 
-// Настройка CORS
+// Настройка CORS (должен быть первым middleware)
 app.use(oakCors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-// Обработка OPTIONS запросов для CORS
+// Обработка OPTIONS запросов
 app.use(async (ctx, next) => {
   if (ctx.request.method === "OPTIONS") {
     ctx.response.status = 204;
@@ -46,11 +46,7 @@ app.use(async (ctx, next) => {
         ctx.state.body = await body.value;
       } else if (body.type === "form") {
         const formData = await body.value;
-        const jsonBody = {};
-        for (const [key, value] of formData.entries()) {
-          jsonBody[key] = value;
-        }
-        ctx.state.body = jsonBody;
+        ctx.state.body = Object.fromEntries(formData.entries());
       }
     } catch (err) {
       console.error("Error parsing body:", err);
@@ -64,37 +60,46 @@ function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Функция для очистки старых данных
+// Функция для очистки старых данных (оптимизированная)
 async function cleanupOldData() {
   try {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
+    const sevenDaysAgo = new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0];
     
+    // Очистка старых просмотров (старше 7 дней)
+    const viewsToDelete = [];
     for await (const entry of kv.list({ prefix: ["views"] })) {
       const date = entry.key[2];
-      if (date < new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0]) {
-        await kv.delete(entry.key);
+      if (date < sevenDaysAgo) {
+        viewsToDelete.push(entry.key);
       }
     }
     
+    // Очистка неактивных пользователей (старше 30 дней с малым балансом)
+    const usersToDelete = [];
     for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.createdAt < thirtyDaysAgo) {
-        if (entry.value.balance < 0.01) {
-          await kv.delete(entry.key);
-          for await (const viewEntry of kv.list({ prefix: ["views", entry.key[1]] })) {
-            await kv.delete(viewEntry.key);
-          }
-        }
+      if (entry.value.createdAt < thirtyDaysAgo && entry.value.balance < 0.01) {
+        usersToDelete.push(entry.key);
       }
     }
     
+    // Очистка завершенных выводов (старше 30 дней)
+    const withdrawalsToDelete = [];
     for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
       if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
-        await kv.delete(entry.key);
+        withdrawalsToDelete.push(entry.key);
       }
     }
     
-    console.log("Cleanup completed");
+    // Пакетное удаление
+    const batch = kv.atomic();
+    viewsToDelete.forEach(key => batch.delete(key));
+    usersToDelete.forEach(key => batch.delete(key));
+    withdrawalsToDelete.forEach(key => batch.delete(key));
+    await batch.commit();
+    
+    console.log(`Cleanup completed: ${viewsToDelete.length} views, ${usersToDelete.length} users, ${withdrawalsToDelete.length} withdrawals removed`);
   } catch (error) {
     console.error("Cleanup error:", error);
   }
@@ -104,12 +109,10 @@ async function cleanupOldData() {
 cleanupOldData();
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 
-// Регистрация пользователя
+// Регистрация пользователя (исправленный эндпоинт)
 router.post("/register", async (ctx) => {
   try {
-    const body = ctx.state.body || {};
-    const refCode = body.refCode || null;
-    
+    const { refCode } = ctx.state.body || {};
     const userId = `user_${generateId()}`;
     const userRefCode = generateId().toString();
 
@@ -188,8 +191,8 @@ router.all("/reward", async (ctx) => {
       return;
     }
 
-    const user = (await kv.get(["users", userId])).value;
-    if (!user) {
+    const user = await kv.get(["users", userId]);
+    if (!user.value) {
       ctx.response.status = 404;
       ctx.response.body = { 
         success: false,
@@ -210,9 +213,9 @@ router.all("/reward", async (ctx) => {
       return;
     }
 
-    const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+    const newBalance = user.value.balance + CONFIG.REWARD_PER_AD;
     await kv.atomic()
-      .set(["users", userId], { ...user, balance: newBalance })
+      .set(["users", userId], { ...user.value, balance: newBalance })
       .set(["views", userId, today], dailyViews + 1)
       .commit();
 
@@ -773,7 +776,8 @@ router.get("/", (ctx) => {
     version: "1.0",
     endpoints: {
       register: "POST /register",
-      reward: "/reward?userid=USERID&secret=wagner46375",
+      reward: "GET/POST /reward",
+      user: "GET /user/:userId",
       withdraw: "POST /withdraw",
       admin: "/admin/login",
       tasks: "GET /tasks",
@@ -795,11 +799,7 @@ app.addEventListener("error", (evt) => {
   console.error("Server error:", evt.error);
 });
 
-// Добавляем роутеры в приложение
-app.use(router.routes());
-app.use(router.allowedMethods());
-
 // Запуск сервера
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-await app.listen({ port }); 
+await app.listen({ port });
