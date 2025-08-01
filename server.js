@@ -35,9 +35,6 @@ app.use(async (ctx, next) => {
       const body = ctx.request.body();
       if (body.type === "json") {
         ctx.state.body = await body.value;
-      } else if (body.type === "form-data") {
-        const formData = await body.value.read();
-        ctx.state.body = formData.fields;
       }
     }
     await next();
@@ -248,6 +245,22 @@ router
         details: error.message 
       };
     }
+  })
+  .get("/tasks", async (ctx) => {
+    try {
+      const tasks = [];
+      for await (const entry of kv.list({ prefix: ["tasks"] })) {
+        tasks.push(entry.value);
+      }
+      ctx.response.body = { success: true, tasks };
+    } catch (error) {
+      ctx.response.status = 500;
+      ctx.response.body = { 
+        success: false,
+        error: "Failed to get tasks",
+        details: error.message 
+      };
+    }
   });
 
 // Админ-маршруты
@@ -286,6 +299,82 @@ adminRouter
       ctx.response.body = { 
         success: false,
         error: "Failed to get withdrawals",
+        details: error.message 
+      };
+    }
+  })
+  .post("/withdrawals/:id", checkAdminAuth, async (ctx) => {
+    try {
+      const { status } = ctx.state.body || {};
+      const withdrawalId = ctx.params.id;
+      
+      await kv.set(["withdrawals", withdrawalId], {
+        ...(await kv.get(["withdrawals", withdrawalId])).value,
+        status,
+        processedAt: new Date().toISOString()
+      });
+      
+      ctx.response.body = { success: true };
+    } catch (error) {
+      ctx.response.status = 500;
+      ctx.response.body = { 
+        success: false,
+        error: "Failed to update withdrawal",
+        details: error.message 
+      };
+    }
+  })
+  .get("/tasks", checkAdminAuth, async (ctx) => {
+    try {
+      const tasks = [];
+      for await (const entry of kv.list({ prefix: ["tasks"] })) {
+        tasks.push(entry.value);
+      }
+      ctx.response.body = { success: true, tasks };
+    } catch (error) {
+      ctx.response.status = 500;
+      ctx.response.body = { 
+        success: false,
+        error: "Failed to get tasks",
+        details: error.message 
+      };
+    }
+  })
+  .post("/tasks", checkAdminAuth, async (ctx) => {
+    try {
+      const { title, reward, description, url, cooldown } = ctx.state.body || {};
+      const taskId = `task_${generateId()}`;
+      
+      await kv.set(["tasks", taskId], {
+        id: taskId,
+        title,
+        reward: parseFloat(reward),
+        description,
+        url,
+        cooldown: parseInt(cooldown) || 10,
+        createdAt: new Date().toISOString()
+      });
+      
+      ctx.response.body = { success: true, taskId };
+    } catch (error) {
+      ctx.response.status = 500;
+      ctx.response.body = { 
+        success: false,
+        error: "Failed to add task",
+        details: error.message 
+      };
+    }
+  })
+  .delete("/tasks/:id", checkAdminAuth, async (ctx) => {
+    try {
+      const taskId = ctx.params.id;
+      await kv.delete(["tasks", taskId]);
+      ctx.response.body = { success: true };
+    } catch (error) {
+      ctx.response.status = 500;
+      ctx.response.body = { 
+        success: false,
+        error: "Failed to delete task",
         details: error.message 
       };
     }
