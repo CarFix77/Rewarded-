@@ -564,7 +564,6 @@
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15
-      // Пароль админа удален из фронтенда
     };
 
     const state = {
@@ -577,17 +576,33 @@
       referralCode: "",
       completedTasks: [],
       adminToken: null,
-      tasks: []
+      tasks: [] // Гарантированная инициализация как массива
     };
 
-    // Функция инициализации пользователя с улучшенной обработкой ошибок
+    // Генератор ID для задач
+    function generateTaskId() {
+      return 'task_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    // Функция нормализации задачи
+    function normalizeTask(task) {
+      return {
+        id: task?.id || generateTaskId(),
+        title: task?.title || 'Без названия',
+        reward: Math.max(0.01, Number(task?.reward) || 0.01),
+        description: task?.description || '',
+        url: task?.url || '#',
+        cooldown: Math.max(5, Number(task?.cooldown) || 10),
+        ...task
+      };
+    }
+
+    // Функция инициализации пользователя
     async function initUser() {
       try {
         state.userId = localStorage.getItem('userId');
-        console.log('Current userId:', state.userId);
         
         if (!state.userId) {
-          console.log('Registering new user...');
           const refCode = new URLSearchParams(window.location.search).get('ref');
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
@@ -600,17 +615,10 @@
           
           if (!response.ok) {
             const error = await response.text();
-            console.error('Registration failed:', error);
             throw new Error(error || 'Ошибка регистрации');
           }
           
           const data = await response.json();
-          console.log('Registration data:', data);
-          
-          if (!data.userId) {
-            throw new Error('Неверный ответ сервера: отсутствует userId');
-          }
-          
           state.userId = data.userId;
           state.referralCode = data.refCode;
           localStorage.setItem('userId', state.userId);
@@ -624,7 +632,6 @@
       } catch (error) {
         console.error("Ошибка инициализации:", error);
         
-        // При ошибке "User not found" очищаем localStorage и пробуем снова
         if (error.message.includes("not found")) {
           localStorage.removeItem('userId');
           state.userId = null;
@@ -643,26 +650,21 @@
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
         
         if (response.status === 404) {
-          console.error("User not found, clearing local storage");
           localStorage.removeItem('userId');
           state.userId = null;
-          await initUser(); // Повторная попытка регистрации
+          await initUser();
           return;
         }
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Ошибка загрузки данных пользователя');
+          throw new Error('Ошибка загрузки данных пользователя');
         }
         
         const userData = await response.json();
-        
-        // Получаем статистику просмотров за сегодня
         const today = new Date().toISOString().split('T')[0];
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
         const statsData = statsResponse.ok ? await statsResponse.json() : 0;
         
-        // Обновляем состояние
         state.balance = userData.balance || 0;
         state.referrals = userData.refCount || 0;
         state.referralEarnings = userData.refEarnings || 0;
@@ -697,8 +699,7 @@
         const response = await fetch(url);
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка при просмотре рекламы");
+          throw new Error("Ошибка при просмотре рекламы");
         }
 
         const result = await response.json();
@@ -757,8 +758,7 @@
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка вывода");
+          throw new Error("Ошибка вывода");
         }
 
         const result = await response.json();
@@ -791,19 +791,23 @@
       try {
         const response = await fetch(`${CONFIG.apiUrl}/tasks`);
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка загрузки заданий");
+          throw new Error("Ошибка загрузки заданий");
         }
         
-        state.tasks = await response.json();
+        const data = await response.json();
+        // Нормализуем задачи перед сохранением
+        state.tasks = Array.isArray(data.tasks) 
+          ? data.tasks.map(normalizeTask)
+          : [];
+          
         renderTasks();
       } catch (error) {
         console.error("Ошибка загрузки заданий:", error);
+        state.tasks = []; // Сбрасываем в пустой массив
         document.getElementById('tasks-list').innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заданий. Попробуйте позже.
-          </p>
-        `;
+          </p>`;
       }
     }
 
@@ -816,8 +820,7 @@
         container.innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Нет доступных заданий
-          </p>
-        `;
+          </p>`;
         return;
       }
       
@@ -832,8 +835,7 @@
             onclick="startTask('${task.id}')" 
             ${isCompleted ? 'disabled' : ''}>
             ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
-          </button>
-        `;
+          </button>`;
         container.appendChild(taskEl);
       });
     }
@@ -869,8 +871,7 @@
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка выполнения задания");
+          throw new Error("Ошибка выполнения задания");
         }
         
         const result = await response.json();
@@ -895,7 +896,6 @@
       document.getElementById('admin-password').value = '';
     }
 
-    // Проверка пароля админа (без хранения пароля во фронтенде)
     async function checkAdminPassword() {
       const password = document.getElementById('admin-password').value;
       
@@ -910,8 +910,7 @@
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка авторизации");
+          throw new Error("Ошибка авторизации");
         }
 
         const data = await response.json();
@@ -951,20 +950,18 @@
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка загрузки заявок");
+          throw new Error("Ошибка загрузки заявок");
         }
         
         const allWithdrawals = await response.json();
-        const filtered = allWithdrawals.filter(w => w.status === filter);
+        const filtered = allWithdrawals.withdrawals?.filter(w => w.status === filter) || [];
         renderWithdrawals(filtered, filter);
       } catch (error) {
         console.error("Ошибка загрузки заявок:", error);
         document.getElementById('withdrawals-list').innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заявок
-          </p>
-        `;
+          </p>`;
       }
     }
 
@@ -977,8 +974,7 @@
         container.innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Нет заявок со статусом "${getStatusText(filter)}"
-          </p>
-        `;
+          </p>`;
         return;
       }
       
@@ -989,15 +985,15 @@
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <strong>#${withdrawal.id}</strong>
             <div>
-              <span>$${withdrawal.amount.toFixed(2)}</span>
+              <span>$${(withdrawal.amount || 0).toFixed(2)}</span>
               <span class="status-badge status-${withdrawal.status}">
                 ${getStatusText(withdrawal.status)}
               </span>
             </div>
           </div>
           <div style="margin: 8px 0; font-size: 14px;">
-            <div>Кошелек: ${withdrawal.wallet}</div>
-            <div>Пользователь: ${withdrawal.userId}</div>
+            <div>Кошелек: ${withdrawal.wallet || 'Не указан'}</div>
+            <div>Пользователь: ${withdrawal.userId || 'Неизвестен'}</div>
             <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
           </div>
           ${withdrawal.status === 'pending' ? `
@@ -1009,8 +1005,7 @@
               Отклонить
             </button>
           </div>
-          ` : ''}
-        `;
+          ` : ''}`;
         container.appendChild(item);
       });
     }
@@ -1029,8 +1024,7 @@
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка обработки заявки");
+          throw new Error("Ошибка обработки заявки");
         }
         
         showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
@@ -1052,19 +1046,23 @@
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка загрузки заданий");
+          throw new Error("Ошибка загрузки заданий");
         }
         
-        state.tasks = await response.json();
+        const data = await response.json();
+        // Нормализуем задачи перед сохранением
+        state.tasks = Array.isArray(data.tasks) 
+          ? data.tasks.map(normalizeTask)
+          : [];
+          
         renderAdminTasks();
       } catch (error) {
         console.error("Ошибка загрузки заданий:", error);
+        state.tasks = []; // Сбрасываем в пустой массив
         document.getElementById('current-tasks').innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заданий
-          </p>
-        `;
+          </p>`;
       }
     }
 
@@ -1077,8 +1075,7 @@
         container.innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Нет созданных заданий
-          </p>
-        `;
+          </p>`;
         return;
       }
       
@@ -1099,8 +1096,7 @@
           </div>
           <div style="margin-top: 8px;">
             <a href="${task.url}" target="_blank" style="color: var(--accent-color);">${task.url}</a>
-          </div>
-        `;
+          </div>`;
         container.appendChild(taskEl);
       });
     }
@@ -1119,6 +1115,15 @@
       }
 
       try {
+        // Создаем объект задачи локально
+        const newTask = normalizeTask({
+          title,
+          reward,
+          description,
+          url,
+          cooldown
+        });
+
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
           method: 'POST',
           headers: { 
@@ -1126,16 +1131,16 @@
             'Authorization': `Bearer ${state.adminToken}`,
             'Accept': 'application/json'
           },
-          body: JSON.stringify({ title, reward, description, url, cooldown })
+          body: JSON.stringify(newTask)
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка добавления задания");
+          throw new Error("Ошибка добавления задания");
         }
         
-        const newTask = await response.json();
-        state.tasks.push(newTask);
+        const result = await response.json();
+        // Добавляем задачу в локальное состояние
+        state.tasks = [...state.tasks, normalizeTask(result.task || newTask)];
         renderAdminTasks();
         
         // Очистка формы
@@ -1166,10 +1171,10 @@
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Ошибка удаления задания");
+          throw new Error("Ошибка удаления задания");
         }
         
+        // Удаляем задачу из локального состояния
         state.tasks = state.tasks.filter(t => t.id !== taskId);
         renderAdminTasks();
         showNotification("Задание удалено!");
