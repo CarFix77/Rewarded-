@@ -1011,6 +1011,99 @@
       document.getElementById('admin-panel').classList.add('hidden');
     }
 
+    async function loadWithdrawals(filter = 'pending') {
+      if (!state.adminToken) {
+        showError('Требуется авторизация');
+        showAdminLogin();
+        return;
+      }
+
+      try {
+        const container = document.getElementById('withdrawals-list');
+        container.innerHTML = '<p>Загрузка заявок...</p>';
+        
+        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
+          headers: { 
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error("Ошибка загрузки заявок");
+        }
+        
+        const data = await response.json();
+        if (!data?.success || !Array.isArray(data.withdrawals)) {
+          throw new Error("Неверный формат данных");
+        }
+        
+        const filtered = data.withdrawals.filter(w => w?.status === filter);
+        renderWithdrawals(filtered, filter);
+      } catch (error) {
+        console.error("Ошибка загрузки заявок:", error);
+        document.getElementById('withdrawals-list').innerHTML = `
+          <p class="no-data">
+            Ошибка загрузки: ${error.message || 'Неизвестная ошибка'}
+          </p>`;
+      }
+    }
+
+    function renderWithdrawals(withdrawals, filter) {
+      const container = document.getElementById('withdrawals-list');
+      container.innerHTML = '';
+      
+      if (!withdrawals || withdrawals.length === 0) {
+        container.innerHTML = `
+          <p class="no-data">
+            Нет заявок со статусом "${getStatusText(filter)}"
+          </p>`;
+        return;
+      }
+      
+      withdrawals.forEach(withdrawal => {
+        // Проверяем наличие ID и других обязательных полей
+        if (!withdrawal?.id || !withdrawal.amount || !withdrawal.wallet) {
+          console.error('Некорректные данные заявки:', withdrawal);
+          return;
+        }
+
+        const displayId = withdrawal.id.replace('wd_', '');
+        const item = document.createElement('div');
+        item.className = 'withdrawal-item';
+        item.dataset.id = withdrawal.id;
+        item.innerHTML = `
+          <div class="loading-overlay">
+            <div class="spinner"></div>
+          </div>
+          <div class="withdrawal-header">
+            <span class="withdrawal-id">#${displayId}</span>
+            <span class="withdrawal-amount">$${(withdrawal.amount || 0).toFixed(2)}</span>
+          </div>
+          <div class="withdrawal-details">
+            <div><strong>Кошелек:</strong> ${withdrawal.wallet || 'Не указан'}</div>
+            <div><strong>Пользователь:</strong> ${shortenUserId(withdrawal.userId)}</div>
+            <div><strong>Дата:</strong> ${formatDate(withdrawal.date)}</div>
+          </div>
+          ${withdrawal.status === 'pending' ? `
+          <div class="withdrawal-actions">
+            <button class="btn approve-btn" 
+              onclick="processWithdrawal('${withdrawal.id}', 'completed')">
+              Одобрить
+            </button>
+            <button class="btn reject-btn" 
+              onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
+              Отклонить
+            </button>
+          </div>` : ''}
+          <div class="withdrawal-status status-${withdrawal.status}">
+            ${getStatusText(withdrawal.status)}
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
     async function processWithdrawal(id, status) {
       if (!state.adminToken) {
         showError('Требуется авторизация');
@@ -1081,89 +1174,6 @@
           if (overlay) overlay.style.display = 'none';
         }
       }
-    }
-
-    async function loadWithdrawals(filter = 'pending') {
-      if (!state.adminToken) {
-        showError('Требуется авторизация');
-        showAdminLogin();
-        return;
-      }
-
-      try {
-        const container = document.getElementById('withdrawals-list');
-        container.innerHTML = '<p>Загрузка заявок...</p>';
-        
-        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
-          headers: { 
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка загрузки заявок");
-        }
-        
-        const allWithdrawals = await response.json();
-        const filtered = allWithdrawals.withdrawals?.filter(w => w.status === filter) || [];
-        renderWithdrawals(filtered, filter);
-      } catch (error) {
-        console.error("Ошибка загрузки заявок:", error);
-        document.getElementById('withdrawals-list').innerHTML = `
-          <p class="no-data">
-            Ошибка загрузки: ${error.message || 'Неизвестная ошибка'}
-          </p>`;
-      }
-    }
-
-    function renderWithdrawals(withdrawals, filter) {
-      const container = document.getElementById('withdrawals-list');
-      container.innerHTML = '';
-      
-      if (!withdrawals || withdrawals.length === 0) {
-        container.innerHTML = `
-          <p class="no-data">
-            Нет заявок со статусом "${getStatusText(filter)}"
-          </p>`;
-        return;
-      }
-      
-      withdrawals.forEach(withdrawal => {
-        const displayId = withdrawal.id.replace('wd_', '');
-        const item = document.createElement('div');
-        item.className = 'withdrawal-item';
-        item.dataset.id = withdrawal.id;
-        item.innerHTML = `
-          <div class="loading-overlay">
-            <div class="spinner"></div>
-          </div>
-          <div class="withdrawal-header">
-            <span class="withdrawal-id">#${displayId}</span>
-            <span class="withdrawal-amount">$${withdrawal.amount?.toFixed(2) || '0.00'}</span>
-          </div>
-          <div class="withdrawal-details">
-            <div><strong>Кошелек:</strong> ${withdrawal.wallet || 'Не указан'}</div>
-            <div><strong>Пользователь:</strong> ${shortenUserId(withdrawal.userId)}</div>
-            <div><strong>Дата:</strong> ${formatDate(withdrawal.date)}</div>
-          </div>
-          ${withdrawal.status === 'pending' ? `
-          <div class="withdrawal-actions">
-            <button class="btn approve-btn" 
-              onclick="processWithdrawal('${withdrawal.id}', 'completed')">
-              Одобрить
-            </button>
-            <button class="btn reject-btn" 
-              onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
-              Отклонить
-            </button>
-          </div>` : ''}
-          <div class="withdrawal-status status-${withdrawal.status}">
-            ${getStatusText(withdrawal.status)}
-          </div>
-        `;
-        container.appendChild(item);
-      });
     }
 
     async function loadAdminTasks() {
