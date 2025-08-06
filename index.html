@@ -365,6 +365,46 @@
       padding: 20px;
       text-align: center;
     }
+
+    /* Новые стили для заявок */
+    .withdrawal-item {
+      border: 1px solid var(--primary-dark);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .withdrawal-header {
+      display: flex;
+      justify-content: space-between;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .withdrawal-details div {
+      margin: 4px 0;
+      font-size: 14px;
+    }
+
+    .withdrawal-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .approve-btn {
+      background-color: var(--primary-color);
+    }
+
+    .reject-btn {
+      background-color: var(--error-color);
+    }
+
+    .no-data {
+      text-align: center;
+      color: var(--secondary-text);
+      padding: 20px;
+    }
   </style>
 </head>
 <body>
@@ -579,25 +619,7 @@
       tasks: []
     };
 
-    // Генератор ID для задач
-    function generateTaskId() {
-      return 'task_' + Math.random().toString(36).substr(2, 9);
-    }
-
-    // Функция нормализации задачи
-    function normalizeTask(task) {
-      return {
-        id: task?.id || generateTaskId(),
-        title: task?.title || 'Без названия',
-        reward: Math.max(0.01, Number(task?.reward) || 0.01),
-        description: task?.description || '',
-        url: task?.url || '#',
-        cooldown: Math.max(5, Number(task?.cooldown) || 10),
-        ...task
-      };
-    }
-
-    // Функция инициализации пользователя
+    // Инициализация пользователя
     async function initUser() {
       try {
         state.userId = localStorage.getItem('userId');
@@ -644,7 +666,7 @@
       }
     }
 
-    // Функция загрузки данных пользователя
+    // Загрузка данных пользователя
     async function loadUserData() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
@@ -680,7 +702,7 @@
       }
     }
 
-    // Функция просмотра рекламы
+    // Просмотр рекламы
     async function startAd() {
       if (state.isAdBlocked) {
         showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
@@ -718,7 +740,7 @@
       }
     }
 
-    // Функция вывода средств
+    // Вывод средств
     async function submitWithdrawal() {
       const wallet = document.getElementById('wallet').value.trim();
       const amount = parseFloat(document.getElementById('amount').value);
@@ -775,7 +797,7 @@
       }
     }
 
-    // Функция копирования реферальной ссылки
+    // Копирование реферальной ссылки
     function copyReferralLink() {
       const link = `https://t.me/Ad_Rew_ards_bot?start=${state.referralCode}`;
       navigator.clipboard.writeText(link).then(() => {
@@ -786,7 +808,7 @@
       });
     }
 
-    // Функция загрузки заданий
+    // Загрузка заданий
     async function loadTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/tasks`);
@@ -796,7 +818,15 @@
         
         const data = await response.json();
         state.tasks = Array.isArray(data.tasks) 
-          ? data.tasks.map(normalizeTask)
+          ? data.tasks.map(task => ({
+              id: task.id,
+              title: task.title,
+              reward: parseFloat(task.reward) || 0.01,
+              description: task.description,
+              url: task.url,
+              cooldown: parseInt(task.cooldown) || 10,
+              type: task.type || 'default'
+            }))
           : [];
           
         renderTasks();
@@ -810,7 +840,7 @@
       }
     }
 
-    // Функция отображения заданий
+    // Отображение заданий
     function renderTasks() {
       const container = document.getElementById('tasks-list');
       container.innerHTML = '';
@@ -839,7 +869,7 @@
       });
     }
 
-    // Функция выполнения задания
+    // Выполнение задания
     async function startTask(taskId) {
       const task = state.tasks.find(t => t.id === taskId);
       if (!task) return;
@@ -857,7 +887,7 @@
       }, task.cooldown * 1000);
     }
 
-    // Функция завершения задания
+    // Завершение задания
     async function completeTask(taskId) {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
@@ -938,7 +968,65 @@
       document.getElementById('admin-panel').classList.add('hidden');
     }
 
+    // Обработка заявок на вывод (исправленная версия)
+    async function processWithdrawal(id, status) {
+      if (!state.adminToken) {
+        showError('Требуется авторизация');
+        showAdminLogin();
+        return;
+      }
+
+      if (!['completed', 'rejected'].includes(status)) {
+        showError('Недопустимый статус заявки');
+        return;
+      }
+
+      try {
+        // Блокируем кнопки во время обработки
+        const buttons = document.querySelectorAll(`button[onclick*="${id}"]`);
+        buttons.forEach(btn => btn.disabled = true);
+
+        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ status })
+        });
+
+        // Обрабатываем разные статусы ответа
+        if (response.status === 404) {
+          throw new Error('Заявка не найдена');
+        }
+        
+        if (response.status === 401) {
+          throw new Error('Недостаточно прав');
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Ошибка сервера');
+        }
+
+        // Успешный случай
+        showNotification(`Заявка #${id} успешно ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
+        loadWithdrawals('pending'); // Обновляем список
+        
+      } catch (error) {
+        console.error('Ошибка обработки заявки:', error);
+        showError(error.message || 'Не удалось обработать заявку');
+      }
+    }
+
     async function loadWithdrawals(filter = 'pending') {
+      if (!state.adminToken) {
+        showError('Требуется авторизация');
+        showAdminLogin();
+        return;
+      }
+
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
           headers: { 
@@ -957,8 +1045,8 @@
       } catch (error) {
         console.error("Ошибка загрузки заявок:", error);
         document.getElementById('withdrawals-list').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
-            Ошибка загрузки заявок
+          <p class="no-data">
+            Ошибка загрузки заявок: ${error.message || 'Неизвестная ошибка'}
           </p>`;
       }
     }
@@ -969,7 +1057,7 @@
       
       if (!withdrawals || withdrawals.length === 0) {
         container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
+          <p class="no-data">
             Нет заявок со статусом "${getStatusText(filter)}"
           </p>`;
         return;
@@ -979,59 +1067,40 @@
         const item = document.createElement('div');
         item.className = 'withdrawal-item';
         item.innerHTML = `
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong>#${withdrawal.id}</strong>
-            <div>
-              <span>$${(withdrawal.amount || 0).toFixed(2)}</span>
-              <span class="status-badge status-${withdrawal.status}">
-                ${getStatusText(withdrawal.status)}
-              </span>
-            </div>
+          <div class="withdrawal-header">
+            <span class="withdrawal-id">#${withdrawal.id?.split('_')[1] || withdrawal.id}</span>
+            <span class="withdrawal-amount">$${withdrawal.amount?.toFixed(2) || '0.00'}</span>
           </div>
-          <div style="margin: 8px 0; font-size: 14px;">
+          <div class="withdrawal-details">
             <div>Кошелек: ${withdrawal.wallet || 'Не указан'}</div>
-            <div>Пользователь: ${withdrawal.userId || 'Неизвестен'}</div>
+            <div>Пользователь: ${shortenUserId(withdrawal.userId)}</div>
             <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
           </div>
           ${withdrawal.status === 'pending' ? `
-          <div class="admin-actions">
-            <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
+          <div class="withdrawal-actions">
+            <button class="btn approve-btn" 
+              onclick="processWithdrawal('${withdrawal.id}', 'completed')"
+              ${withdrawal.status !== 'pending' ? 'disabled' : ''}>
               Одобрить
             </button>
-            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
+            <button class="btn reject-btn" 
+              onclick="processWithdrawal('${withdrawal.id}', 'rejected')"
+              ${withdrawal.status !== 'pending' ? 'disabled' : ''}>
               Отклонить
             </button>
-          </div>
-          ` : ''}`;
+          </div>` : ''}
+        `;
         container.appendChild(item);
       });
     }
 
-    async function processWithdrawal(id, status) {
-      try {
-        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({ status })
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка обработки заявки");
-        }
-        
-        showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
-        loadWithdrawals('pending');
-      } catch (error) {
-        console.error("Ошибка:", error);
-        showError(error.message || "Ошибка обработки заявки");
-      }
+    function shortenUserId(userId) {
+      return userId ? userId.slice(0, 6) + '...' + userId.slice(-3) : 'Неизвестен';
     }
 
     async function loadAdminTasks() {
+      if (!state.adminToken) return;
+
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
           headers: { 
@@ -1046,7 +1115,15 @@
         
         const data = await response.json();
         state.tasks = Array.isArray(data.tasks) 
-          ? data.tasks.map(normalizeTask)
+          ? data.tasks.map(task => ({
+              id: task.id,
+              title: task.title,
+              reward: parseFloat(task.reward) || 0.01,
+              description: task.description,
+              url: task.url,
+              cooldown: parseInt(task.cooldown) || 10,
+              type: task.type || 'default'
+            }))
           : [];
           
         renderAdminTasks();
@@ -1054,8 +1131,8 @@
         console.error("Ошибка загрузки заданий:", error);
         state.tasks = [];
         document.getElementById('current-tasks').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
-            Ошибка загрузки заданий
+          <p class="no-data">
+            Ошибка загрузки заданий: ${error.message || 'Неизвестная ошибка'}
           </p>`;
       }
     }
@@ -1066,7 +1143,7 @@
       
       if (!state.tasks || state.tasks.length === 0) {
         container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
+          <p class="no-data">
             Нет созданных заданий
           </p>`;
         return;
@@ -1095,6 +1172,12 @@
     }
 
     async function addTask() {
+      if (!state.adminToken) {
+        showError('Требуется авторизация');
+        showAdminLogin();
+        return;
+      }
+
       const title = document.getElementById('new-task-title').value.trim();
       const reward = parseFloat(document.getElementById('new-task-reward').value);
       const description = document.getElementById('new-task-desc').value.trim();
@@ -1107,14 +1190,6 @@
       }
 
       try {
-        const newTask = normalizeTask({
-          title,
-          reward,
-          description,
-          url,
-          cooldown
-        });
-
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
           method: 'POST',
           headers: { 
@@ -1122,7 +1197,13 @@
             'Authorization': `Bearer ${state.adminToken}`,
             'Accept': 'application/json'
           },
-          body: JSON.stringify(newTask)
+          body: JSON.stringify({
+            title,
+            reward,
+            description,
+            url,
+            cooldown
+          })
         });
         
         if (!response.ok) {
@@ -1130,9 +1211,18 @@
         }
         
         const result = await response.json();
-        state.tasks = [...state.tasks, normalizeTask(result.task || newTask)];
+        state.tasks = [...state.tasks, {
+          id: result.taskId || `task_${Date.now()}`,
+          title,
+          reward,
+          description,
+          url,
+          cooldown,
+          type: 'default'
+        }];
         renderAdminTasks();
         
+        // Очищаем форму
         document.getElementById('new-task-title').value = '';
         document.getElementById('new-task-reward').value = '';
         document.getElementById('new-task-desc').value = '';
@@ -1147,6 +1237,12 @@
     }
 
     async function deleteTask(taskId) {
+      if (!state.adminToken) {
+        showError('Требуется авторизация');
+        showAdminLogin();
+        return;
+      }
+
       if (!confirm("Удалить это задание?")) return;
       
       try {
