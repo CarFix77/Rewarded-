@@ -366,7 +366,6 @@
       text-align: center;
     }
 
-    /* Стили для заявок на вывод */
     .withdrawal-item {
       border: 1px solid var(--primary-dark);
       border-radius: 8px;
@@ -411,21 +410,6 @@
       border-radius: 12px;
       font-size: 12px;
       font-weight: bold;
-    }
-
-    .status-pending {
-      background-color: #f39c12;
-      color: white;
-    }
-
-    .status-completed {
-      background-color: var(--primary-color);
-      color: white;
-    }
-
-    .status-rejected {
-      background-color: var(--error-color);
-      color: white;
     }
 
     .loading-overlay {
@@ -833,6 +817,12 @@
         const result = await response.json();
         state.balance -= amount;
         updateUI();
+        
+        // Обновляем список заявок в админ-панели
+        if (state.adminToken) {
+          await loadWithdrawals('pending');
+        }
+        
         showPage('main-page');
         showNotification(`Заявка #${result.withdrawId} на $${amount.toFixed(2)} создана!`);
         
@@ -1003,7 +993,7 @@
 
     function showAdminPanel() {
       document.getElementById('admin-panel').classList.remove('hidden');
-      loadWithdrawals();
+      loadWithdrawals('pending');
       loadAdminTasks();
     }
 
@@ -1034,11 +1024,14 @@
         }
         
         const data = await response.json();
-        if (!data?.success || !Array.isArray(data.withdrawals)) {
-          throw new Error("Неверный формат данных");
+        
+        if (!data || !data.success || !Array.isArray(data.withdrawals)) {
+          throw new Error("Неверный формат данных заявок");
         }
         
-        const filtered = data.withdrawals.filter(w => w?.status === filter);
+        const filtered = data.withdrawals.filter(w => w && w.status === filter);
+        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
         renderWithdrawals(filtered, filter);
       } catch (error) {
         console.error("Ошибка загрузки заявок:", error);
@@ -1062,8 +1055,7 @@
       }
       
       withdrawals.forEach(withdrawal => {
-        // Проверяем наличие ID и других обязательных полей
-        if (!withdrawal?.id || !withdrawal.amount || !withdrawal.wallet) {
+        if (!withdrawal || !withdrawal.id || typeof withdrawal.amount !== 'number' || !withdrawal.wallet) {
           console.error('Некорректные данные заявки:', withdrawal);
           return;
         }
@@ -1078,10 +1070,10 @@
           </div>
           <div class="withdrawal-header">
             <span class="withdrawal-id">#${displayId}</span>
-            <span class="withdrawal-amount">$${(withdrawal.amount || 0).toFixed(2)}</span>
+            <span class="withdrawal-amount">$${withdrawal.amount.toFixed(2)}</span>
           </div>
           <div class="withdrawal-details">
-            <div><strong>Кошелек:</strong> ${withdrawal.wallet || 'Не указан'}</div>
+            <div><strong>Кошелек:</strong> ${withdrawal.wallet}</div>
             <div><strong>Пользователь:</strong> ${shortenUserId(withdrawal.userId)}</div>
             <div><strong>Дата:</strong> ${formatDate(withdrawal.date)}</div>
           </div>
@@ -1111,19 +1103,16 @@
         return;
       }
 
-      // Добавляем префикс wd_ если его нет
       const withdrawalId = id.startsWith('wd_') ? id : `wd_${id}`;
       const buttons = document.querySelectorAll(`button[onclick*="${id}"]`);
       const item = document.querySelector(`.withdrawal-item[data-id="${id}"]`);
       
       try {
-        // Показываем индикатор загрузки
         if (item) {
           const overlay = item.querySelector('.loading-overlay');
           if (overlay) overlay.style.display = 'flex';
         }
         
-        // Блокируем кнопки
         buttons.forEach(btn => {
           btn.disabled = true;
           btn.innerHTML = '<span>⏳</span> Обработка...';
@@ -1153,22 +1142,18 @@
         }
 
         showNotification(`Заявка #${withdrawalId.replace('wd_', '')} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
-        
-        // Обновляем список через 1 секунду (даем время серверу обновиться)
         setTimeout(() => loadWithdrawals('pending'), 1000);
         
       } catch (error) {
         console.error('Ошибка обработки заявки:', error);
         showError(error.message || 'Не удалось обработать заявку');
         
-        // Восстанавливаем кнопки
         buttons.forEach(btn => {
           btn.disabled = false;
           btn.innerHTML = status === 'completed' ? 'Одобрить' : 'Отклонить';
         });
         
       } finally {
-        // Скрываем индикатор загрузки
         if (item) {
           const overlay = item.querySelector('.loading-overlay');
           if (overlay) overlay.style.display = 'none';
@@ -1300,7 +1285,6 @@
         }];
         renderAdminTasks();
         
-        // Очищаем форму
         document.getElementById('new-task-title').value = '';
         document.getElementById('new-task-reward').value = '';
         document.getElementById('new-task-desc').value = '';
@@ -1356,7 +1340,7 @@
       if (pageId === 'tasks-page') {
         loadTasks();
       } else if (pageId === 'admin-panel') {
-        loadWithdrawals();
+        loadWithdrawals('pending');
         loadAdminTasks();
       }
     }
@@ -1423,17 +1407,14 @@
         setTimeout(() => {
           document.getElementById('splash-screen').style.display = 'none';
           
-          // Инициализация обработчиков событий
           document.getElementById('watch-ad-btn').addEventListener('click', startAd);
           document.getElementById('retry-btn').addEventListener('click', () => {
             showConnectionError(false);
             initUser();
           });
           
-          // Секретная кнопка админа
           document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
           
-          // Горячая клавиша для админа (Ctrl+Alt+A)
           document.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.altKey && e.key === 'a') {
               showAdminLogin();
