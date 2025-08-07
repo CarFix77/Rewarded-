@@ -18,7 +18,7 @@ const router = new Router();
 
 // ================== FIREBASE HELPERS ================== //
 
-async function firebaseGet(path: string): Promise<any> {
+async function firebaseGet(path) {
   try {
     const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`);
     return await res.json();
@@ -28,7 +28,7 @@ async function firebaseGet(path: string): Promise<any> {
   }
 }
 
-async function firebaseSet(path: string, data: any): Promise<boolean> {
+async function firebaseSet(path, data) {
   try {
     const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
       method: "PUT",
@@ -42,7 +42,7 @@ async function firebaseSet(path: string, data: any): Promise<boolean> {
   }
 }
 
-async function firebaseUpdate(path: string, updates: any): Promise<boolean> {
+async function firebaseUpdate(path, updates) {
   try {
     const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
       method: "PATCH",
@@ -56,7 +56,7 @@ async function firebaseUpdate(path: string, updates: any): Promise<boolean> {
   }
 }
 
-async function firebasePush(path: string, data: any): Promise<string | null> {
+async function firebasePush(path, data) {
   try {
     const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
       method: "POST",
@@ -71,7 +71,7 @@ async function firebasePush(path: string, data: any): Promise<string | null> {
   }
 }
 
-async function firebaseDelete(path: string): Promise<boolean> {
+async function firebaseDelete(path) {
   try {
     const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
       method: "DELETE"
@@ -124,7 +124,7 @@ app.use(async (ctx, next) => {
 
 // ================== HELPERS ================== //
 
-function generateId(): string {
+function generateId() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
@@ -149,7 +149,7 @@ router.post("/register", async (ctx) => {
   if (refCode) {
     const users = await firebaseGet("users");
     if (users) {
-      const referrerEntry = Object.entries(users).find(([_, u]: any) => u.refCode === refCode);
+      const referrerEntry = Object.entries(users).find(([_, u]) => u.refCode === refCode);
       if (referrerEntry) {
         const [referrerId, referrer] = referrerEntry;
         const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
@@ -298,7 +298,7 @@ router.get("/admin/withdrawals", async (ctx) => {
   const withdrawals = await firebaseGet("withdrawals") || {};
   ctx.response.body = { 
     success: true, 
-    withdrawals: Object.entries(withdrawals).map(([id, data]: any) => ({ id, ...data })) 
+    withdrawals: Object.entries(withdrawals).map(([id, data]) => ({ id, ...data })) 
   };
 });
 
