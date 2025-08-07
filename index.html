@@ -88,6 +88,14 @@
       background-color: var(--error-color);
     }
 
+    .btn-delete {
+      background-color: #7f8c8d;
+    }
+
+    .btn-delete:hover {
+      background-color: #95a5a6;
+    }
+
     .balance {
       text-align: center;
       margin: 25px 0;
@@ -172,6 +180,14 @@
       display: flex;
       gap: 10px;
       margin-top: 10px;
+    }
+
+    .withdrawal-item {
+      margin-bottom: 15px;
+      padding: 15px;
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 8px;
+      border: 1px solid var(--primary-dark);
     }
 
     #splash-screen {
@@ -576,15 +592,13 @@
       referralCode: "",
       completedTasks: [],
       adminToken: null,
-      tasks: [] // Гарантированная инициализация как массива
+      tasks: []
     };
 
-    // Генератор ID для задач
     function generateTaskId() {
       return 'task_' + Math.random().toString(36).substr(2, 9);
     }
 
-    // Функция нормализации задачи
     function normalizeTask(task) {
       return {
         id: task?.id || generateTaskId(),
@@ -597,7 +611,6 @@
       };
     }
 
-    // Функция инициализации пользователя
     async function initUser() {
       try {
         state.userId = localStorage.getItem('userId');
@@ -644,7 +657,6 @@
       }
     }
 
-    // Функция загрузки данных пользователя
     async function loadUserData() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
@@ -680,7 +692,6 @@
       }
     }
 
-    // Функция просмотра рекламы
     async function startAd() {
       if (state.isAdBlocked) {
         showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
@@ -718,7 +729,6 @@
       }
     }
 
-    // Функция вывода средств
     async function submitWithdrawal() {
       const wallet = document.getElementById('wallet').value.trim();
       const amount = parseFloat(document.getElementById('amount').value);
@@ -775,7 +785,6 @@
       }
     }
 
-    // Функция копирования реферальной ссылки
     function copyReferralLink() {
       const link = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
       navigator.clipboard.writeText(link).then(() => {
@@ -786,7 +795,6 @@
       });
     }
 
-    // Функция загрузки заданий
     async function loadTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/tasks`);
@@ -795,7 +803,6 @@
         }
         
         const data = await response.json();
-        // Нормализуем задачи перед сохранением
         state.tasks = Array.isArray(data.tasks) 
           ? data.tasks.map(normalizeTask)
           : [];
@@ -803,7 +810,7 @@
         renderTasks();
       } catch (error) {
         console.error("Ошибка загрузки заданий:", error);
-        state.tasks = []; // Сбрасываем в пустой массив
+        state.tasks = [];
         document.getElementById('tasks-list').innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заданий. Попробуйте позже.
@@ -811,7 +818,6 @@
       }
     }
 
-    // Функция отображения заданий
     function renderTasks() {
       const container = document.getElementById('tasks-list');
       container.innerHTML = '';
@@ -840,7 +846,6 @@
       });
     }
 
-    // Функция выполнения задания
     async function startTask(taskId) {
       const task = state.tasks.find(t => t.id === taskId);
       if (!task) return;
@@ -858,7 +863,6 @@
       }, task.cooldown * 1000);
     }
 
-    // Функция завершения задания
     async function completeTask(taskId) {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
@@ -886,7 +890,6 @@
       }
     }
 
-    // Админ-функции
     function showAdminLogin() {
       document.getElementById('admin-login').classList.remove('hidden');
     }
@@ -939,7 +942,6 @@
       document.getElementById('admin-panel').classList.add('hidden');
     }
 
-    // Загрузка заявок на вывод (админ)
     async function loadWithdrawals(filter = 'pending') {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
@@ -965,7 +967,6 @@
       }
     }
 
-    // Отображение заявок на вывод (админ)
     function renderWithdrawals(withdrawals, filter) {
       const container = document.getElementById('withdrawals-list');
       container.innerHTML = '';
@@ -996,21 +997,23 @@
             <div>Пользователь: ${withdrawal.userId || 'Неизвестен'}</div>
             <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
           </div>
-          ${withdrawal.status === 'pending' ? `
           <div class="admin-actions">
+            ${withdrawal.status === 'pending' ? `
             <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
               Одобрить
             </button>
             <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
               Отклонить
             </button>
-          </div>
-          ` : ''}`;
+            ` : ''}
+            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}')">
+              Удалить
+            </button>
+          </div>`;
         container.appendChild(item);
       });
     }
 
-    // Обработка заявки на вывод (админ)
     async function processWithdrawal(id, status) {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
@@ -1035,7 +1038,38 @@
       }
     }
 
-    // Загрузка заданий (админ)
+    async function deleteWithdrawal(id) {
+      // Оптимистичное обновление - сразу удаляем из интерфейса
+      const container = document.getElementById('withdrawals-list');
+      const items = container.querySelectorAll('.withdrawal-item');
+      items.forEach(item => {
+        if (item.textContent.includes(`#${id}`)) {
+          item.remove();
+        }
+      });
+
+      try {
+        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
+          method: 'DELETE',
+          headers: { 
+            'Authorization': `Bearer ${state.adminToken}`,
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error("Ошибка удаления заявки");
+        }
+        
+        showNotification(`Заявка #${id} удалена!`);
+      } catch (error) {
+        console.error("Ошибка:", error);
+        showError(error.message || "Ошибка удаления заявки");
+        // Если ошибка - перезагружаем список
+        loadWithdrawals();
+      }
+    }
+
     async function loadAdminTasks() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
@@ -1050,7 +1084,6 @@
         }
         
         const data = await response.json();
-        // Нормализуем задачи перед сохранением
         state.tasks = Array.isArray(data.tasks) 
           ? data.tasks.map(normalizeTask)
           : [];
@@ -1058,7 +1091,7 @@
         renderAdminTasks();
       } catch (error) {
         console.error("Ошибка загрузки заданий:", error);
-        state.tasks = []; // Сбрасываем в пустой массив
+        state.tasks = [];
         document.getElementById('current-tasks').innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заданий
@@ -1066,7 +1099,6 @@
       }
     }
 
-    // Отображение заданий (админ)
     function renderAdminTasks() {
       const container = document.getElementById('current-tasks');
       container.innerHTML = '';
@@ -1101,7 +1133,6 @@
       });
     }
 
-    // Добавление задания (админ)
     async function addTask() {
       const title = document.getElementById('new-task-title').value.trim();
       const reward = parseFloat(document.getElementById('new-task-reward').value);
@@ -1115,7 +1146,6 @@
       }
 
       try {
-        // Создаем объект задачи локально
         const newTask = normalizeTask({
           title,
           reward,
@@ -1139,11 +1169,9 @@
         }
         
         const result = await response.json();
-        // Добавляем задачу в локальное состояние
         state.tasks = [...state.tasks, normalizeTask(result.task || newTask)];
         renderAdminTasks();
         
-        // Очистка формы
         document.getElementById('new-task-title').value = '';
         document.getElementById('new-task-reward').value = '';
         document.getElementById('new-task-desc').value = '';
@@ -1157,7 +1185,6 @@
       }
     }
 
-    // Удаление задания (админ)
     async function deleteTask(taskId) {
       if (!confirm("Удалить это задание?")) return;
       
@@ -1174,7 +1201,6 @@
           throw new Error("Ошибка удаления задания");
         }
         
-        // Удаляем задачу из локального состояния
         state.tasks = state.tasks.filter(t => t.id !== taskId);
         renderAdminTasks();
         showNotification("Задание удалено!");
@@ -1184,7 +1210,6 @@
       }
     }
 
-    // Вспомогательные функции
     function showPage(pageId) {
       document.querySelectorAll('.page').forEach(page => {
         page.classList.remove('active');
@@ -1237,7 +1262,6 @@
       return statuses[status] || status;
     }
 
-    // Инициализация приложения
     async function init() {
       setTimeout(() => {
         document.getElementById('splash-screen').style.opacity = '0';
@@ -1250,10 +1274,8 @@
             initUser();
           });
           
-          // Секретная кнопка админа
           document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
           
-          // Горячая клавиша для админа (Ctrl+Alt+A)
           document.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.altKey && e.key === 'a') {
               showAdminLogin();
@@ -1265,7 +1287,6 @@
       }, 1500);
     }
 
-    // Запуск приложения
     document.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
