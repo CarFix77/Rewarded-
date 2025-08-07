@@ -188,6 +188,7 @@
       background: rgba(0, 0, 0, 0.1);
       border-radius: 8px;
       border: 1px solid var(--primary-dark);
+      transition: all 0.3s ease;
     }
 
     #splash-screen {
@@ -380,6 +381,20 @@
       z-index: 2000;
       padding: 20px;
       text-align: center;
+    }
+
+    .loader {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>
@@ -611,6 +626,16 @@
       };
     }
 
+    function shortenId(id) {
+      return id ? `${id.substring(0, 4)}...${id.substring(id.length - 4)}` : 'Неизвестен';
+    }
+
+    function formatDate(dateString) {
+      if (!dateString) return 'Нет данных';
+      const date = new Date(dateString);
+      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    }
+
     async function initUser() {
       try {
         state.userId = localStorage.getItem('userId');
@@ -754,6 +779,10 @@
       }
 
       try {
+        const btn = document.querySelector('#withdraw-page .btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader"></span> Обработка...';
+
         const response = await fetch(`${CONFIG.apiUrl}/withdraw`, {
           method: 'POST',
           headers: { 
@@ -768,7 +797,8 @@
         });
 
         if (!response.ok) {
-          throw new Error("Ошибка вывода");
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || "Ошибка вывода");
         }
 
         const result = await response.json();
@@ -782,6 +812,12 @@
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка при создании заявки");
+      } finally {
+        const btn = document.querySelector('#withdraw-page .btn');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Отправить заявку';
+        }
       }
     }
 
@@ -903,6 +939,10 @@
       const password = document.getElementById('admin-password').value;
       
       try {
+        const btn = document.querySelector('#admin-login .btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader"></span> Проверка...';
+
         const response = await fetch(`${CONFIG.apiUrl}/admin/login`, {
           method: 'POST',
           headers: { 
@@ -929,6 +969,12 @@
       } catch (error) {
         console.error("Ошибка авторизации:", error);
         showError("Неверный пароль или ошибка сервера");
+      } finally {
+        const btn = document.querySelector('#admin-login .btn');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Войти';
+        }
       }
     }
 
@@ -944,6 +990,9 @@
 
     async function loadWithdrawals(filter = 'pending') {
       try {
+        const container = document.getElementById('withdrawals-list');
+        container.innerHTML = '<p style="text-align: center; padding: 20px;">Загрузка...</p>';
+
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
           headers: { 
             'Authorization': `Bearer ${state.adminToken}`,
@@ -961,10 +1010,19 @@
       } catch (error) {
         console.error("Ошибка загрузки заявок:", error);
         document.getElementById('withdrawals-list').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
+          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
             Ошибка загрузки заявок
           </p>`;
       }
+    }
+
+    function getStatusText(status) {
+      const statuses = {
+        'pending': 'Ожидает',
+        'completed': 'Выполнено',
+        'rejected': 'Отклонено'
+      };
+      return statuses[status] || status;
     }
 
     function renderWithdrawals(withdrawals, filter) {
@@ -973,7 +1031,7 @@
       
       if (!withdrawals || withdrawals.length === 0) {
         container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
+          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
             Нет заявок со статусом "${getStatusText(filter)}"
           </p>`;
         return;
@@ -984,7 +1042,7 @@
         item.className = 'withdrawal-item';
         item.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong>#${withdrawal.id}</strong>
+            <strong>#${withdrawal.id.split('_')[1] || withdrawal.id}</strong>
             <div>
               <span>$${(withdrawal.amount || 0).toFixed(2)}</span>
               <span class="status-badge status-${withdrawal.status}">
@@ -994,79 +1052,117 @@
           </div>
           <div style="margin: 8px 0; font-size: 14px;">
             <div>Кошелек: ${withdrawal.wallet || 'Не указан'}</div>
-            <div>Пользователь: ${withdrawal.userId || 'Неизвестен'}</div>
-            <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
+            <div>Пользователь: ${shortenId(withdrawal.userId)}</div>
+            <div>Дата: ${formatDate(withdrawal.date)}</div>
           </div>
+          ${withdrawal.status === 'pending' ? `
           <div class="admin-actions">
-            ${withdrawal.status === 'pending' ? `
-            <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
+            <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed', event)">
               Одобрить
             </button>
-            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
+            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected', event)">
               Отклонить
             </button>
-            ` : ''}
-            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}')">
+            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}', event)">
               Удалить
             </button>
-          </div>`;
+          </div>
+          ` : `
+          <div class="admin-actions">
+            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}', event)">
+              Удалить
+            </button>
+          </div>
+          `}
+        `;
         container.appendChild(item);
       });
     }
 
-    async function processWithdrawal(id, status) {
+    async function processWithdrawal(id, status, event) {
       try {
+        // Показываем загрузку
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader"></span> Обработка...';
+
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
           method: 'POST',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${state.adminToken}`,
             'Accept': 'application/json'
           },
           body: JSON.stringify({ status })
         });
-        
+
         if (!response.ok) {
-          throw new Error("Ошибка обработки заявки");
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || "Ошибка сервера");
         }
-        
-        showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
-        loadWithdrawals('pending');
+
+        // Обновляем интерфейс без перезагрузки
+        const item = document.querySelector(`.withdrawal-item:has(button[onclick*="${id}"])`);
+        if (item) {
+          const statusBadge = item.querySelector('.status-badge');
+          statusBadge.className = `status-badge status-${status}`;
+          statusBadge.textContent = getStatusText(status);
+          
+          // Удаляем кнопки действий
+          const actions = item.querySelector('.admin-actions');
+          if (actions) actions.innerHTML = `
+            <button class="btn btn-delete" onclick="deleteWithdrawal('${id}', event)">
+              Удалить
+            </button>
+          `;
+        }
+
+        showNotification(`Заявка ${id} обработана!`);
       } catch (error) {
         console.error("Ошибка:", error);
-        showError(error.message || "Ошибка обработки заявки");
+        showError(error.message);
+      } finally {
+        if (event.target) {
+          event.target.disabled = false;
+          event.target.textContent = originalText;
+        }
       }
     }
 
-    async function deleteWithdrawal(id) {
-      // Оптимистичное обновление - сразу удаляем из интерфейса
-      const container = document.getElementById('withdrawals-list');
-      const items = container.querySelectorAll('.withdrawal-item');
-      items.forEach(item => {
-        if (item.textContent.includes(`#${id}`)) {
-          item.remove();
-        }
-      });
+    async function deleteWithdrawal(id, event) {
+      if (!confirm("Удалить эту заявку?")) return;
 
       try {
+        // Показываем загрузку
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader"></span> Удаление...';
+
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
           method: 'DELETE',
-          headers: { 
+          headers: {
             'Authorization': `Bearer ${state.adminToken}`,
             'Accept': 'application/json'
           }
         });
-        
+
         if (!response.ok) {
-          throw new Error("Ошибка удаления заявки");
+          throw new Error("Не удалось удалить");
         }
-        
-        showNotification(`Заявка #${id} удалена!`);
+
+        // Удаляем элемент из DOM с анимацией
+        const item = document.querySelector(`.withdrawal-item:has(button[onclick*="${id}"])`);
+        if (item) {
+          item.style.opacity = '0';
+          setTimeout(() => item.remove(), 300);
+        }
+
+        showNotification("Заявка удалена!");
       } catch (error) {
         console.error("Ошибка:", error);
-        showError(error.message || "Ошибка удаления заявки");
-        // Если ошибка - перезагружаем список
-        loadWithdrawals();
+        showError(error.message);
       }
     }
 
@@ -1093,7 +1189,7 @@
         console.error("Ошибка загрузки заданий:", error);
         state.tasks = [];
         document.getElementById('current-tasks').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
+          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
             Ошибка загрузки заданий
           </p>`;
       }
@@ -1105,7 +1201,7 @@
       
       if (!state.tasks || state.tasks.length === 0) {
         container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
+          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
             Нет созданных заданий
           </p>`;
         return;
@@ -1117,7 +1213,7 @@
         taskEl.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <strong>${task.title}</strong>
-            <button class="btn btn-danger" onclick="deleteTask('${task.id}')">
+            <button class="btn btn-danger" onclick="deleteTask('${task.id}', event)">
               Удалить
             </button>
           </div>
@@ -1146,6 +1242,10 @@
       }
 
       try {
+        const btn = document.querySelector('#admin-panel .admin-section:last-child .btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader"></span> Добавление...';
+
         const newTask = normalizeTask({
           title,
           reward,
@@ -1182,13 +1282,24 @@
       } catch (error) {
         console.error("Ошибка добавления задания:", error);
         showError(error.message || "Ошибка добавления задания");
+      } finally {
+        const btn = document.querySelector('#admin-panel .admin-section:last-child .btn');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Добавить задание';
+        }
       }
     }
 
-    async function deleteTask(taskId) {
+    async function deleteTask(taskId, event) {
       if (!confirm("Удалить это задание?")) return;
       
       try {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader"></span> Удаление...';
+
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks/${taskId}`, {
           method: 'DELETE',
           headers: { 
@@ -1207,6 +1318,11 @@
       } catch (error) {
         console.error("Ошибка удаления задания:", error);
         showError(error.message || "Ошибка удаления задания");
+      } finally {
+        if (event.target) {
+          event.target.disabled = false;
+          event.target.textContent = originalText;
+        }
       }
     }
 
@@ -1251,15 +1367,6 @@
     function showConnectionError(show) {
       document.getElementById('connection-error').classList.toggle('hidden', !show);
       document.getElementById('app-container').style.display = show ? 'none' : 'block';
-    }
-
-    function getStatusText(status) {
-      const statuses = {
-        'pending': 'Ожидает',
-        'completed': 'Выполнено',
-        'rejected': 'Отклонено'
-      };
-      return statuses[status] || status;
     }
 
     async function init() {
