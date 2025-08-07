@@ -1,7 +1,5 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.8/firebase-app.js";
-import { getDatabase, ref, set, get, update, remove, push, query, equalTo, orderByChild } from "https://www.gstatic.com/firebasejs/9.6.8/firebase-database.js";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -10,18 +8,80 @@ const CONFIG = {
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223"
+  ADMIN_PASSWORD: "8223Nn8223",
+  FIREBASE_URL: "https://ggggitz-default-rtdb.firebaseio.com",
+  FIREBASE_SECRET: Deno.env.get("FIREBASE_SECRET") || "your-database-secret"
 };
-
-// Инициализация Firebase
-const firebaseConfig = {
-  databaseURL: "https://ggggitz-default-rtdb.firebaseio.com/"
-};
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getDatabase(firebaseApp);
 
 const app = new Application();
 const router = new Router();
+
+// ================== FIREBASE HELPERS ================== //
+
+async function firebaseGet(path: string): Promise<any> {
+  try {
+    const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`);
+    return await res.json();
+  } catch (error) {
+    console.error("Firebase GET error:", error);
+    return null;
+  }
+}
+
+async function firebaseSet(path: string, data: any): Promise<boolean> {
+  try {
+    const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    return res.ok;
+  } catch (error) {
+    console.error("Firebase SET error:", error);
+    return false;
+  }
+}
+
+async function firebaseUpdate(path: string, updates: any): Promise<boolean> {
+  try {
+    const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates)
+    });
+    return res.ok;
+  } catch (error) {
+    console.error("Firebase UPDATE error:", error);
+    return false;
+  }
+}
+
+async function firebasePush(path: string, data: any): Promise<string | null> {
+  try {
+    const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    const result = await res.json();
+    return result.name; // Returns the new ID
+  } catch (error) {
+    console.error("Firebase PUSH error:", error);
+    return null;
+  }
+}
+
+async function firebaseDelete(path: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${CONFIG.FIREBASE_URL}/${path}.json?auth=${CONFIG.FIREBASE_SECRET}`, {
+      method: "DELETE"
+    });
+    return res.ok;
+  } catch (error) {
+    console.error("Firebase DELETE error:", error);
+    return false;
+  }
+}
 
 // ================== MIDDLEWARES ================== //
 
@@ -64,21 +124,8 @@ app.use(async (ctx, next) => {
 
 // ================== HELPERS ================== //
 
-function generateId() {
-  return Math.floor(100000 + Math.random() * 900000);
-}
-
-async function getData(path) {
-  const snapshot = await get(ref(db, path));
-  return snapshot.exists() ? snapshot.val() : null;
-}
-
-async function setData(path, data) {
-  await set(ref(db, path), data);
-}
-
-async function updateData(path, updates) {
-  await update(ref(db, path), updates);
+function generateId(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 // ================== ROUTES ================== //
@@ -86,7 +133,7 @@ async function updateData(path, updates) {
 router.post("/register", async (ctx) => {
   const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
-  const userRefCode = generateId().toString();
+  const userRefCode = generateId();
 
   const userData = {
     balance: 0,
@@ -97,17 +144,16 @@ router.post("/register", async (ctx) => {
     createdAt: new Date().toISOString()
   };
 
-  await setData(`users/${userId}`, userData);
+  await firebaseSet(`users/${userId}`, userData);
 
   if (refCode) {
-    const usersSnapshot = await get(ref(db, 'users'));
-    if (usersSnapshot.exists()) {
-      const users = usersSnapshot.val();
-      const referrer = Object.values(users).find(u => u.refCode === refCode);
-      
-      if (referrer) {
+    const users = await firebaseGet("users");
+    if (users) {
+      const referrerEntry = Object.entries(users).find(([_, u]: any) => u.refCode === refCode);
+      if (referrerEntry) {
+        const [referrerId, referrer] = referrerEntry;
         const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-        await updateData(`users/${Object.keys(users).find(key => users[key] === referrer)}`, {
+        await firebaseUpdate(`users/${referrerId}`, {
           refCount: referrer.refCount + 1,
           refEarnings: referrer.refEarnings + bonus,
           balance: referrer.balance + bonus
@@ -148,7 +194,7 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  const user = await getData(`users/${userId}`);
+  const user = await firebaseGet(`users/${userId}`);
   if (!user) {
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "User not found" };
@@ -156,7 +202,7 @@ router.all("/reward", async (ctx) => {
   }
 
   const today = new Date().toISOString().split("T")[0];
-  const dailyViews = await getData(`views/${userId}/${today}`) || 0;
+  const dailyViews = await firebaseGet(`views/${userId}/${today}`) || 0;
 
   if (dailyViews >= CONFIG.DAILY_LIMIT) {
     ctx.response.status = 429;
@@ -165,8 +211,8 @@ router.all("/reward", async (ctx) => {
   }
 
   const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-  await updateData(`users/${userId}`, { balance: newBalance });
-  await setData(`views/${userId}/${today}`, dailyViews + 1);
+  await firebaseUpdate(`users/${userId}`, { balance: newBalance });
+  await firebaseSet(`views/${userId}/${today}`, dailyViews + 1);
 
   ctx.response.body = {
     success: true,
@@ -178,7 +224,7 @@ router.all("/reward", async (ctx) => {
 
 router.get("/user/:userId", async (ctx) => {
   const userId = ctx.params.userId;
-  const user = await getData(`users/${userId}`);
+  const user = await firebaseGet(`users/${userId}`);
   
   if (!user) {
     ctx.response.status = 404;
@@ -193,15 +239,9 @@ router.get("/user/:userId", async (ctx) => {
   };
 });
 
-router.get("/views/:userId/:date", async (ctx) => {
-  const { userId, date } = ctx.params;
-  const views = await getData(`views/${userId}/${date}`) || 0;
-  ctx.response.body = { success: true, views };
-});
-
 router.post("/withdraw", async (ctx) => {
   const { userId, wallet, amount } = ctx.state.body || {};
-  const user = await getData(`users/${userId}`);
+  const user = await firebaseGet(`users/${userId}`);
 
   if (!user) {
     ctx.response.status = 404;
@@ -222,17 +262,15 @@ router.post("/withdraw", async (ctx) => {
   }
 
   const withdrawId = `wd_${generateId()}`;
-  await updateData(`users/${userId}`, { balance: user.balance - amount });
+  await firebaseUpdate(`users/${userId}`, { balance: user.balance - amount });
   
-  const withdrawalData = {
+  await firebaseSet(`withdrawals/${withdrawId}`, {
     userId,
     amount,
     wallet,
     date: new Date().toISOString(),
     status: "pending"
-  };
-  
-  await setData(`withdrawals/${withdrawId}`, withdrawalData);
+  });
 
   ctx.response.body = { success: true, withdrawId };
 });
@@ -257,64 +295,17 @@ router.get("/admin/withdrawals", async (ctx) => {
     return;
   }
 
-  const withdrawals = await getData('withdrawals') || {};
+  const withdrawals = await firebaseGet("withdrawals") || {};
   ctx.response.body = { 
     success: true, 
-    withdrawals: Object.entries(withdrawals).map(([id, data]) => ({ id, ...data })) 
+    withdrawals: Object.entries(withdrawals).map(([id, data]: any) => ({ id, ...data })) 
   };
-});
-
-router.post("/admin/withdrawals/:id", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  const { status } = ctx.state.body || {};
-  const withdrawal = await getData(`withdrawals/${ctx.params.id}`);
-
-  if (!withdrawal) {
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "Not found" };
-    return;
-  }
-
-  await updateData(`withdrawals/${ctx.params.id}`, {
-    ...withdrawal,
-    status,
-    processedAt: new Date().toISOString()
-  });
-
-  ctx.response.body = { success: true };
 });
 
 // ================== SERVER SETUP ================== //
 
-router.get("/", (ctx) => {
-  ctx.response.body = {
-    success: true,
-    status: "OK",
-    version: "1.0",
-    endpoints: {
-      register: "POST /register",
-      reward: "GET/POST /reward",
-      user: "GET /user/:userId",
-      withdraw: "POST /withdraw",
-      admin: "/admin/login",
-      tasks: "GET /tasks"
-    }
-  };
-});
-
 app.use(router.routes());
 app.use(router.allowedMethods());
-
-app.use((ctx) => {
-  ctx.response.status = 404;
-  ctx.response.body = { success: false, error: "Endpoint not found" };
-});
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
