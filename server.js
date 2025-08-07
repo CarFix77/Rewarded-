@@ -1,5 +1,7 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.8/firebase-app.js";
+import { getDatabase, ref, set, get, update, remove, push, query, equalTo, orderByChild } from "https://www.gstatic.com/firebasejs/9.6.8/firebase-database.js";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -11,7 +13,13 @@ const CONFIG = {
   ADMIN_PASSWORD: "8223Nn8223"
 };
 
-const kv = await Deno.openKv();
+// Инициализация Firebase
+const firebaseConfig = {
+  databaseURL: "https://ggggitz-default-rtdb.firebaseio.com/"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
+
 const app = new Application();
 const router = new Router();
 
@@ -60,48 +68,18 @@ function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-async function cleanupOldData() {
-  try {
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
-    const sevenDaysAgo = new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0];
-    
-    const batch = kv.atomic();
-    let count = 0;
-
-    for await (const entry of kv.list({ prefix: ["views"] })) {
-      if (entry.key[2] < sevenDaysAgo) {
-        batch.delete(entry.key);
-        count++;
-      }
-    }
-
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.createdAt < thirtyDaysAgo && entry.value.balance < 0.01) {
-        batch.delete(entry.key);
-        for await (const viewEntry of kv.list({ prefix: ["views", entry.key[1]] })) {
-          batch.delete(viewEntry.key);
-        }
-        count++;
-      }
-    }
-
-    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-      if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
-        batch.delete(entry.key);
-        count++;
-      }
-    }
-
-    await batch.commit();
-    console.log(`Cleanup completed. Removed ${count} items.`);
-  } catch (error) {
-    console.error("Cleanup error:", error);
-  }
+async function getData(path) {
+  const snapshot = await get(ref(db, path));
+  return snapshot.exists() ? snapshot.val() : null;
 }
 
-setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
-cleanupOldData();
+async function setData(path, data) {
+  await set(ref(db, path), data);
+}
+
+async function updateData(path, updates) {
+  await update(ref(db, path), updates);
+}
 
 // ================== ROUTES ================== //
 
@@ -119,19 +97,21 @@ router.post("/register", async (ctx) => {
     createdAt: new Date().toISOString()
   };
 
-  await kv.set(["users", userId], userData);
+  await setData(`users/${userId}`, userData);
 
   if (refCode) {
-    for await (const entry of kv.list({ prefix: ["users"] })) {
-      if (entry.value.refCode === refCode) {
+    const usersSnapshot = await get(ref(db, 'users'));
+    if (usersSnapshot.exists()) {
+      const users = usersSnapshot.val();
+      const referrer = Object.values(users).find(u => u.refCode === refCode);
+      
+      if (referrer) {
         const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-        await kv.set(entry.key, {
-          ...entry.value,
-          refCount: entry.value.refCount + 1,
-          refEarnings: entry.value.refEarnings + bonus,
-          balance: entry.value.balance + bonus
+        await updateData(`users/${Object.keys(users).find(key => users[key] === referrer)}`, {
+          refCount: referrer.refCount + 1,
+          refEarnings: referrer.refEarnings + bonus,
+          balance: referrer.balance + bonus
         });
-        break;
       }
     }
   }
@@ -168,15 +148,15 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  const user = await kv.get(["users", userId]);
-  if (!user.value) {
+  const user = await getData(`users/${userId}`);
+  if (!user) {
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "User not found" };
     return;
   }
 
   const today = new Date().toISOString().split("T")[0];
-  const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+  const dailyViews = await getData(`views/${userId}/${today}`) || 0;
 
   if (dailyViews >= CONFIG.DAILY_LIMIT) {
     ctx.response.status = 429;
@@ -184,11 +164,9 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  const newBalance = user.value.balance + CONFIG.REWARD_PER_AD;
-  await kv.atomic()
-    .set(["users", userId], { ...user.value, balance: newBalance })
-    .set(["views", userId, today], dailyViews + 1)
-    .commit();
+  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+  await updateData(`users/${userId}`, { balance: newBalance });
+  await setData(`views/${userId}/${today}`, dailyViews + 1);
 
   ctx.response.body = {
     success: true,
@@ -200,7 +178,7 @@ router.all("/reward", async (ctx) => {
 
 router.get("/user/:userId", async (ctx) => {
   const userId = ctx.params.userId;
-  const user = (await kv.get(["users", userId])).value;
+  const user = await getData(`users/${userId}`);
   
   if (!user) {
     ctx.response.status = 404;
@@ -217,13 +195,13 @@ router.get("/user/:userId", async (ctx) => {
 
 router.get("/views/:userId/:date", async (ctx) => {
   const { userId, date } = ctx.params;
-  const views = (await kv.get(["views", userId, date])).value || 0;
+  const views = await getData(`views/${userId}/${date}`) || 0;
   ctx.response.body = { success: true, views };
 });
 
 router.post("/withdraw", async (ctx) => {
   const { userId, wallet, amount } = ctx.state.body || {};
-  const user = (await kv.get(["users", userId])).value;
+  const user = await getData(`users/${userId}`);
 
   if (!user) {
     ctx.response.status = 404;
@@ -244,99 +222,19 @@ router.post("/withdraw", async (ctx) => {
   }
 
   const withdrawId = `wd_${generateId()}`;
-  await kv.atomic()
-    .set(["users", userId], { ...user, balance: user.balance - amount })
-    .set(["withdrawals", withdrawId], {
-      userId,
-      amount,
-      wallet,
-      date: new Date().toISOString(),
-      status: "pending"
-    })
-    .commit();
+  await updateData(`users/${userId}`, { balance: user.balance - amount });
+  
+  const withdrawalData = {
+    userId,
+    amount,
+    wallet,
+    date: new Date().toISOString(),
+    status: "pending"
+  };
+  
+  await setData(`withdrawals/${withdrawId}`, withdrawalData);
 
   ctx.response.body = { success: true, withdrawId };
-});
-
-router.get("/tasks", async (ctx) => {
-  const tasks = [];
-  for await (const entry of kv.list({ prefix: ["tasks"] })) {
-    tasks.push(entry.value);
-  }
-  
-  const customTasks = [];
-  for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
-    customTasks.push(entry.value);
-  }
-
-  ctx.response.body = {
-    success: true,
-    tasks: [...tasks, ...customTasks]
-  };
-});
-
-router.post("/user/:userId/complete-task", async (ctx) => {
-  const userId = ctx.params.userId;
-  const { taskId } = ctx.state.body || {};
-  
-  const user = (await kv.get(["users", userId])).value;
-  
-  if (!user) {
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
-  }
-  
-  if (!taskId) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Task ID is required" };
-    return;
-  }
-  
-  const completedTasks = user.completedTasks || [];
-  if (completedTasks.includes(taskId)) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Task already completed" };
-    return;
-  }
-  
-  let task = null;
-  for await (const entry of kv.list({ prefix: ["tasks"] })) {
-    if (entry.value.id === taskId) {
-      task = entry.value;
-      break;
-    }
-  }
-  
-  if (!task) {
-    for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
-      if (entry.value.id === taskId) {
-        task = entry.value;
-        break;
-      }
-    }
-  }
-  
-  if (!task) {
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "Task not found" };
-    return;
-  }
-  
-  const newBalance = user.balance + task.reward;
-  const newCompletedTasks = [...completedTasks, taskId];
-  
-  await kv.set(["users", userId], {
-    ...user,
-    balance: newBalance,
-    completedTasks: newCompletedTasks
-  });
-  
-  ctx.response.body = {
-    success: true,
-    balance: newBalance,
-    completedTasks: newCompletedTasks
-  };
 });
 
 // ================== ADMIN ROUTES ================== //
@@ -359,11 +257,11 @@ router.get("/admin/withdrawals", async (ctx) => {
     return;
   }
 
-  const withdrawals = [];
-  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
-    withdrawals.push(entry.value);
-  }
-  ctx.response.body = { success: true, withdrawals };
+  const withdrawals = await getData('withdrawals') || {};
+  ctx.response.body = { 
+    success: true, 
+    withdrawals: Object.entries(withdrawals).map(([id, data]) => ({ id, ...data })) 
+  };
 });
 
 router.post("/admin/withdrawals/:id", async (ctx) => {
@@ -375,7 +273,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
   }
 
   const { status } = ctx.state.body || {};
-  const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
+  const withdrawal = await getData(`withdrawals/${ctx.params.id}`);
 
   if (!withdrawal) {
     ctx.response.status = 404;
@@ -383,129 +281,12 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
     return;
   }
 
-  await kv.set(["withdrawals", ctx.params.id], {
+  await updateData(`withdrawals/${ctx.params.id}`, {
     ...withdrawal,
     status,
     processedAt: new Date().toISOString()
   });
 
-  ctx.response.body = { success: true };
-});
-
-// Новый endpoint для удаления заявок
-router.delete("/admin/withdrawals/:id", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  await kv.delete(["withdrawals", ctx.params.id]);
-  ctx.response.body = { success: true };
-});
-
-router.get("/admin/tasks", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  const tasks = [];
-  for await (const entry of kv.list({ prefix: ["tasks"] })) {
-    tasks.push(entry.value);
-  }
-  ctx.response.body = { success: true, tasks };
-});
-
-router.post("/admin/tasks", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  const { title, reward, description, url, cooldown } = ctx.state.body || {};
-  const taskId = `task_${generateId()}`;
-  
-  await kv.set(["tasks", taskId], {
-    id: taskId,
-    title,
-    reward: parseFloat(reward),
-    description,
-    url,
-    cooldown: parseInt(cooldown) || 10,
-    createdAt: new Date().toISOString(),
-    type: "default"
-  });
-  
-  ctx.response.body = { success: true, taskId };
-});
-
-router.delete("/admin/tasks/:id", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  await kv.delete(["tasks", ctx.params.id]);
-  ctx.response.body = { success: true };
-});
-
-router.get("/admin/custom-tasks", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  const tasks = [];
-  for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
-    tasks.push(entry.value);
-  }
-  ctx.response.body = { success: true, tasks };
-});
-
-router.post("/admin/custom-tasks", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  const { title, reward, description, url, cooldown } = ctx.state.body || {};
-  const taskId = `custom_${generateId()}`;
-  
-  await kv.set(["custom_tasks", taskId], {
-    id: taskId,
-    title,
-    reward: parseFloat(reward),
-    description,
-    url,
-    cooldown: parseInt(cooldown) || 10,
-    createdAt: new Date().toISOString(),
-    type: "custom"
-  });
-  
-  ctx.response.body = { success: true, taskId };
-});
-
-router.delete("/admin/custom-tasks/:id", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  await kv.delete(["custom_tasks", ctx.params.id]);
   ctx.response.body = { success: true };
 });
 
@@ -522,8 +303,7 @@ router.get("/", (ctx) => {
       user: "GET /user/:userId",
       withdraw: "POST /withdraw",
       admin: "/admin/login",
-      tasks: "GET /tasks",
-      completeTask: "POST /user/:userId/complete-task"
+      tasks: "GET /tasks"
     }
   };
 });
