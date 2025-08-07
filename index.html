@@ -1,4 +1,544 @@
-<!DOCTYPE html>
+import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
+import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
+
+const CONFIG = {
+  REWARD_PER_AD: 0.0003,
+  SECRET_KEY: "wagner46375",
+  WEBHOOK_SECRET: "wagner1080",
+  DAILY_LIMIT: 30,
+  MIN_WITHDRAW: 1.00,
+  REFERRAL_PERCENT: 0.15,
+  ADMIN_PASSWORD: "8223Nn8223"
+};
+
+const kv = await Deno.openKv();
+const app = new Application();
+const router = new Router();
+
+// ================== MIDDLEWARES ================== //
+
+app.use(async (ctx, next) => {
+  try {
+    await next();
+  } catch (err) {
+    console.error("Server error:", err);
+    ctx.response.status = 500;
+    ctx.response.body = {
+      success: false,
+      error: "Internal server error",
+      details: err.message
+    };
+  }
+});
+
+app.use(oakCors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+app.use(async (ctx, next) => {
+  if (ctx.request.hasBody) {
+    try {
+      const body = ctx.request.body();
+      if (body.type === "json") {
+        ctx.state.body = await body.value;
+      } else if (body.type === "form") {
+        const formData = await body.value;
+        ctx.state.body = Object.fromEntries(formData.entries());
+      }
+    } catch (err) {
+      console.error("Body parsing error:", err);
+    }
+  }
+  await next();
+});
+
+// ================== HELPERS ================== //
+
+function generateId() {
+  return Math.floor(100000 + Math.random() * 900000);
+}
+
+async function cleanupOldData() {
+  try {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30)).toISOString();
+    const sevenDaysAgo = new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0];
+    
+    const batch = kv.atomic();
+    let count = 0;
+
+    for await (const entry of kv.list({ prefix: ["views"] })) {
+      if (entry.key[2] < sevenDaysAgo) {
+        batch.delete(entry.key);
+        count++;
+      }
+    }
+
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      if (entry.value.createdAt < thirtyDaysAgo && entry.value.balance < 0.01) {
+        batch.delete(entry.key);
+        for await (const viewEntry of kv.list({ prefix: ["views", entry.key[1]] })) {
+          batch.delete(viewEntry.key);
+        }
+        count++;
+      }
+    }
+
+    for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+      if (entry.value.date < thirtyDaysAgo && entry.value.status !== "pending") {
+        batch.delete(entry.key);
+        count++;
+      }
+    }
+
+    await batch.commit();
+    console.log(`Cleanup completed. Removed ${count} items.`);
+  } catch (error) {
+    console.error("Cleanup error:", error);
+  }
+}
+
+setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
+cleanupOldData();
+
+// ================== ROUTES ================== //
+
+router.post("/register", async (ctx) => {
+  const { refCode } = ctx.state.body || {};
+  const userId = `user_${generateId()}`;
+  const userRefCode = generateId().toString();
+
+  const userData = {
+    balance: 0,
+    refCode: userRefCode,
+    refCount: 0,
+    refEarnings: 0,
+    completedTasks: [],
+    createdAt: new Date().toISOString()
+  };
+
+  await kv.set(["users", userId], userData);
+
+  if (refCode) {
+    for await (const entry of kv.list({ prefix: ["users"] })) {
+      if (entry.value.refCode === refCode) {
+        const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
+        await kv.set(entry.key, {
+          ...entry.value,
+          refCount: entry.value.refCount + 1,
+          refEarnings: entry.value.refEarnings + bonus,
+          balance: entry.value.balance + bonus
+        });
+        break;
+      }
+    }
+  }
+
+  ctx.response.body = {
+    success: true,
+    userId,
+    refCode: userRefCode,
+    refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
+  };
+});
+
+router.all("/reward", async (ctx) => {
+  let userId, secret;
+  
+  if (ctx.request.method === "POST") {
+    const body = ctx.state.body || {};
+    userId = body.userId || body.userid;
+    secret = body.secret;
+  } else {
+    userId = ctx.request.url.searchParams.get("userid");
+    secret = ctx.request.url.searchParams.get("secret");
+  }
+
+  if (!userId) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "User ID is required" };
+    return;
+  }
+
+  if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Invalid secret" };
+    return;
+  }
+
+  const user = await kv.get(["users", userId]);
+  if (!user.value) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+  const dailyViews = (await kv.get(["views", userId, today])).value || 0;
+
+  if (dailyViews >= CONFIG.DAILY_LIMIT) {
+    ctx.response.status = 429;
+    ctx.response.body = { success: false, error: "Daily limit reached" };
+    return;
+  }
+
+  const newBalance = user.value.balance + CONFIG.REWARD_PER_AD;
+  await kv.atomic()
+    .set(["users", userId], { ...user.value, balance: newBalance })
+    .set(["views", userId, today], dailyViews + 1)
+    .commit();
+
+  ctx.response.body = {
+    success: true,
+    reward: CONFIG.REWARD_PER_AD,
+    balance: newBalance,
+    viewsToday: dailyViews + 1
+  };
+});
+
+router.get("/user/:userId", async (ctx) => {
+  const userId = ctx.params.userId;
+  const user = (await kv.get(["users", userId])).value;
+  
+  if (!user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+  
+  ctx.response.body = {
+    success: true,
+    ...user,
+    completedTasks: user.completedTasks || []
+  };
+});
+
+router.get("/views/:userId/:date", async (ctx) => {
+  const { userId, date } = ctx.params;
+  const views = (await kv.get(["views", userId, date])).value || 0;
+  ctx.response.body = { success: true, views };
+});
+
+router.post("/withdraw", async (ctx) => {
+  const { userId, wallet, amount } = ctx.state.body || {};
+  const user = (await kv.get(["users", userId])).value;
+
+  if (!user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+
+  if (!wallet || !amount) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Wallet and amount are required" };
+    return;
+  }
+
+  if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Invalid withdrawal amount" };
+    return;
+  }
+
+  const withdrawId = `wd_${generateId()}`;
+  await kv.atomic()
+    .set(["users", userId], { ...user, balance: user.balance - amount })
+    .set(["withdrawals", withdrawId], {
+      userId,
+      amount,
+      wallet,
+      date: new Date().toISOString(),
+      status: "pending"
+    })
+    .commit();
+
+  ctx.response.body = { success: true, withdrawId };
+});
+
+router.get("/tasks", async (ctx) => {
+  const tasks = [];
+  for await (const entry of kv.list({ prefix: ["tasks"] })) {
+    tasks.push(entry.value);
+  }
+  
+  const customTasks = [];
+  for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
+    customTasks.push(entry.value);
+  }
+
+  ctx.response.body = {
+    success: true,
+    tasks: [...tasks, ...customTasks]
+  };
+});
+
+router.post("/user/:userId/complete-task", async (ctx) => {
+  const userId = ctx.params.userId;
+  const { taskId } = ctx.state.body || {};
+  
+  const user = (await kv.get(["users", userId])).value;
+  
+  if (!user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+  
+  if (!taskId) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Task ID is required" };
+    return;
+  }
+  
+  const completedTasks = user.completedTasks || [];
+  if (completedTasks.includes(taskId)) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Task already completed" };
+    return;
+  }
+  
+  let task = null;
+  for await (const entry of kv.list({ prefix: ["tasks"] })) {
+    if (entry.value.id === taskId) {
+      task = entry.value;
+      break;
+    }
+  }
+  
+  if (!task) {
+    for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
+      if (entry.value.id === taskId) {
+        task = entry.value;
+        break;
+      }
+    }
+  }
+  
+  if (!task) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "Task not found" };
+    return;
+  }
+  
+  const newBalance = user.balance + task.reward;
+  const newCompletedTasks = [...completedTasks, taskId];
+  
+  await kv.set(["users", userId], {
+    ...user,
+    balance: newBalance,
+    completedTasks: newCompletedTasks
+  });
+  
+  ctx.response.body = {
+    success: true,
+    balance: newBalance,
+    completedTasks: newCompletedTasks
+  };
+});
+
+// ================== ADMIN ROUTES ================== //
+
+router.post("/admin/login", async (ctx) => {
+  const { password } = ctx.state.body || {};
+  if (password === CONFIG.ADMIN_PASSWORD) {
+    ctx.response.body = { success: true, token: "admin_" + generateId() };
+  } else {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Wrong password" };
+  }
+});
+
+router.get("/admin/withdrawals", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const withdrawals = [];
+  for await (const entry of kv.list({ prefix: ["withdrawals"] })) {
+    withdrawals.push(entry.value);
+  }
+  ctx.response.body = { success: true, withdrawals };
+});
+
+router.post("/admin/withdrawals/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { status } = ctx.state.body || {};
+  const withdrawal = (await kv.get(["withdrawals", ctx.params.id])).value;
+
+  if (!withdrawal) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "Not found" };
+    return;
+  }
+
+  await kv.set(["withdrawals", ctx.params.id], {
+    ...withdrawal,
+    status,
+    processedAt: new Date().toISOString()
+  });
+
+  ctx.response.body = { success: true };
+});
+
+// Новый endpoint для удаления заявок
+router.delete("/admin/withdrawals/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  await kv.delete(["withdrawals", ctx.params.id]);
+  ctx.response.body = { success: true };
+});
+
+router.get("/admin/tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const tasks = [];
+  for await (const entry of kv.list({ prefix: ["tasks"] })) {
+    tasks.push(entry.value);
+  }
+  ctx.response.body = { success: true, tasks };
+});
+
+router.post("/admin/tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const taskId = `task_${generateId()}`;
+  
+  await kv.set(["tasks", taskId], {
+    id: taskId,
+    title,
+    reward: parseFloat(reward),
+    description,
+    url,
+    cooldown: parseInt(cooldown) || 10,
+    createdAt: new Date().toISOString(),
+    type: "default"
+  });
+  
+  ctx.response.body = { success: true, taskId };
+});
+
+router.delete("/admin/tasks/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  await kv.delete(["tasks", ctx.params.id]);
+  ctx.response.body = { success: true };
+});
+
+router.get("/admin/custom-tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const tasks = [];
+  for await (const entry of kv.list({ prefix: ["custom_tasks"] })) {
+    tasks.push(entry.value);
+  }
+  ctx.response.body = { success: true, tasks };
+});
+
+router.post("/admin/custom-tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const taskId = `custom_${generateId()}`;
+  
+  await kv.set(["custom_tasks", taskId], {
+    id: taskId,
+    title,
+    reward: parseFloat(reward),
+    description,
+    url,
+    cooldown: parseInt(cooldown) || 10,
+    createdAt: new Date().toISOString(),
+    type: "custom"
+  });
+  
+  ctx.response.body = { success: true, taskId };
+});
+
+router.delete("/admin/custom-tasks/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  await kv.delete(["custom_tasks", ctx.params.id]);
+  ctx.response.body = { success: true };
+});
+
+// ================== SERVER SETUP ================== //
+
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    success: true,
+    status: "OK",
+    version: "1.0",
+    endpoints: {
+      register: "POST /register",
+      reward: "GET/POST /reward",
+      user: "GET /user/:userId",
+      withdraw: "POST /withdraw",
+      admin: "/admin/login",
+      tasks: "GET /tasks",
+      completeTask: "POST /user/:userId/complete-task"
+    }
+  };
+});
+
+app.use(router.routes());
+app.use(router.allowedMethods());
+
+app.use((ctx) => {
+  ctx.response.status = 404;
+  ctx.response.body = { success: false, error: "Endpoint not found" };
+});
+
+const port = parseInt(Deno.env.get("PORT") || "8000");
+console.log(`Server running on port ${port}`);
+await app.listen({ port });      Смотри какой сервер.  <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
@@ -188,7 +728,6 @@
       background: rgba(0, 0, 0, 0.1);
       border-radius: 8px;
       border: 1px solid var(--primary-dark);
-      transition: all 0.3s ease;
     }
 
     #splash-screen {
@@ -381,20 +920,6 @@
       z-index: 2000;
       padding: 20px;
       text-align: center;
-    }
-
-    .loader {
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-radius: 50%;
-      border-top-color: white;
-      animation: spin 1s ease-in-out infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
     }
   </style>
 </head>
@@ -626,16 +1151,6 @@
       };
     }
 
-    function shortenId(id) {
-      return id ? `${id.substring(0, 4)}...${id.substring(id.length - 4)}` : 'Неизвестен';
-    }
-
-    function formatDate(dateString) {
-      if (!dateString) return 'Нет данных';
-      const date = new Date(dateString);
-      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-    }
-
     async function initUser() {
       try {
         state.userId = localStorage.getItem('userId');
@@ -779,10 +1294,6 @@
       }
 
       try {
-        const btn = document.querySelector('#withdraw-page .btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loader"></span> Обработка...';
-
         const response = await fetch(`${CONFIG.apiUrl}/withdraw`, {
           method: 'POST',
           headers: { 
@@ -797,8 +1308,7 @@
         });
 
         if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
-          throw new Error(error.error || "Ошибка вывода");
+          throw new Error("Ошибка вывода");
         }
 
         const result = await response.json();
@@ -812,12 +1322,6 @@
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка при создании заявки");
-      } finally {
-        const btn = document.querySelector('#withdraw-page .btn');
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = 'Отправить заявку';
-        }
       }
     }
 
@@ -939,10 +1443,6 @@
       const password = document.getElementById('admin-password').value;
       
       try {
-        const btn = document.querySelector('#admin-login .btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loader"></span> Проверка...';
-
         const response = await fetch(`${CONFIG.apiUrl}/admin/login`, {
           method: 'POST',
           headers: { 
@@ -969,12 +1469,6 @@
       } catch (error) {
         console.error("Ошибка авторизации:", error);
         showError("Неверный пароль или ошибка сервера");
-      } finally {
-        const btn = document.querySelector('#admin-login .btn');
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = 'Войти';
-        }
       }
     }
 
@@ -990,9 +1484,6 @@
 
     async function loadWithdrawals(filter = 'pending') {
       try {
-        const container = document.getElementById('withdrawals-list');
-        container.innerHTML = '<p style="text-align: center; padding: 20px;">Загрузка...</p>';
-
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
           headers: { 
             'Authorization': `Bearer ${state.adminToken}`,
@@ -1010,19 +1501,10 @@
       } catch (error) {
         console.error("Ошибка загрузки заявок:", error);
         document.getElementById('withdrawals-list').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
+          <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заявок
           </p>`;
       }
-    }
-
-    function getStatusText(status) {
-      const statuses = {
-        'pending': 'Ожидает',
-        'completed': 'Выполнено',
-        'rejected': 'Отклонено'
-      };
-      return statuses[status] || status;
     }
 
     function renderWithdrawals(withdrawals, filter) {
@@ -1031,7 +1513,7 @@
       
       if (!withdrawals || withdrawals.length === 0) {
         container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
+          <p style="text-align: center; color: var(--secondary-text);">
             Нет заявок со статусом "${getStatusText(filter)}"
           </p>`;
         return;
@@ -1042,7 +1524,7 @@
         item.className = 'withdrawal-item';
         item.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong>#${withdrawal.id.split('_')[1] || withdrawal.id}</strong>
+            <strong>#${withdrawal.id}</strong>
             <div>
               <span>$${(withdrawal.amount || 0).toFixed(2)}</span>
               <span class="status-badge status-${withdrawal.status}">
@@ -1052,117 +1534,79 @@
           </div>
           <div style="margin: 8px 0; font-size: 14px;">
             <div>Кошелек: ${withdrawal.wallet || 'Не указан'}</div>
-            <div>Пользователь: ${shortenId(withdrawal.userId)}</div>
-            <div>Дата: ${formatDate(withdrawal.date)}</div>
+            <div>Пользователь: ${withdrawal.userId || 'Неизвестен'}</div>
+            <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
           </div>
-          ${withdrawal.status === 'pending' ? `
           <div class="admin-actions">
-            <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed', event)">
+            ${withdrawal.status === 'pending' ? `
+            <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
               Одобрить
             </button>
-            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected', event)">
+            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
               Отклонить
             </button>
-            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}', event)">
+            ` : ''}
+            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}')">
               Удалить
             </button>
-          </div>
-          ` : `
-          <div class="admin-actions">
-            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}', event)">
-              Удалить
-            </button>
-          </div>
-          `}
-        `;
+          </div>`;
         container.appendChild(item);
       });
     }
 
-    async function processWithdrawal(id, status, event) {
+    async function processWithdrawal(id, status) {
       try {
-        // Показываем загрузку
-        const btn = event.target;
-        const originalText = btn.textContent;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loader"></span> Обработка...';
-
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
           method: 'POST',
-          headers: {
+          headers: { 
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${state.adminToken}`,
             'Accept': 'application/json'
           },
           body: JSON.stringify({ status })
         });
-
+        
         if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
-          throw new Error(error.error || "Ошибка сервера");
+          throw new Error("Ошибка обработки заявки");
         }
-
-        // Обновляем интерфейс без перезагрузки
-        const item = document.querySelector(`.withdrawal-item:has(button[onclick*="${id}"])`);
-        if (item) {
-          const statusBadge = item.querySelector('.status-badge');
-          statusBadge.className = `status-badge status-${status}`;
-          statusBadge.textContent = getStatusText(status);
-          
-          // Удаляем кнопки действий
-          const actions = item.querySelector('.admin-actions');
-          if (actions) actions.innerHTML = `
-            <button class="btn btn-delete" onclick="deleteWithdrawal('${id}', event)">
-              Удалить
-            </button>
-          `;
-        }
-
-        showNotification(`Заявка ${id} обработана!`);
+        
+        showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
+        loadWithdrawals('pending');
       } catch (error) {
         console.error("Ошибка:", error);
-        showError(error.message);
-      } finally {
-        if (event.target) {
-          event.target.disabled = false;
-          event.target.textContent = originalText;
-        }
+        showError(error.message || "Ошибка обработки заявки");
       }
     }
 
-    async function deleteWithdrawal(id, event) {
-      if (!confirm("Удалить эту заявку?")) return;
+    async function deleteWithdrawal(id) {
+      // Оптимистичное обновление - сразу удаляем из интерфейса
+      const container = document.getElementById('withdrawals-list');
+      const items = container.querySelectorAll('.withdrawal-item');
+      items.forEach(item => {
+        if (item.textContent.includes(`#${id}`)) {
+          item.remove();
+        }
+      });
 
       try {
-        // Показываем загрузку
-        const btn = event.target;
-        const originalText = btn.textContent;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loader"></span> Удаление...';
-
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
           method: 'DELETE',
-          headers: {
+          headers: { 
             'Authorization': `Bearer ${state.adminToken}`,
             'Accept': 'application/json'
           }
         });
-
+        
         if (!response.ok) {
-          throw new Error("Не удалось удалить");
+          throw new Error("Ошибка удаления заявки");
         }
-
-        // Удаляем элемент из DOM с анимацией
-        const item = document.querySelector(`.withdrawal-item:has(button[onclick*="${id}"])`);
-        if (item) {
-          item.style.opacity = '0';
-          setTimeout(() => item.remove(), 300);
-        }
-
-        showNotification("Заявка удалена!");
+        
+        showNotification(`Заявка #${id} удалена!`);
       } catch (error) {
         console.error("Ошибка:", error);
-        showError(error.message);
+        showError(error.message || "Ошибка удаления заявки");
+        // Если ошибка - перезагружаем список
+        loadWithdrawals();
       }
     }
 
@@ -1189,7 +1633,7 @@
         console.error("Ошибка загрузки заданий:", error);
         state.tasks = [];
         document.getElementById('current-tasks').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
+          <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заданий
           </p>`;
       }
@@ -1201,7 +1645,7 @@
       
       if (!state.tasks || state.tasks.length === 0) {
         container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text); padding: 20px;">
+          <p style="text-align: center; color: var(--secondary-text);">
             Нет созданных заданий
           </p>`;
         return;
@@ -1213,7 +1657,7 @@
         taskEl.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <strong>${task.title}</strong>
-            <button class="btn btn-danger" onclick="deleteTask('${task.id}', event)">
+            <button class="btn btn-danger" onclick="deleteTask('${task.id}')">
               Удалить
             </button>
           </div>
@@ -1242,10 +1686,6 @@
       }
 
       try {
-        const btn = document.querySelector('#admin-panel .admin-section:last-child .btn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loader"></span> Добавление...';
-
         const newTask = normalizeTask({
           title,
           reward,
@@ -1282,24 +1722,13 @@
       } catch (error) {
         console.error("Ошибка добавления задания:", error);
         showError(error.message || "Ошибка добавления задания");
-      } finally {
-        const btn = document.querySelector('#admin-panel .admin-section:last-child .btn');
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = 'Добавить задание';
-        }
       }
     }
 
-    async function deleteTask(taskId, event) {
+    async function deleteTask(taskId) {
       if (!confirm("Удалить это задание?")) return;
       
       try {
-        const btn = event.target;
-        const originalText = btn.textContent;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="loader"></span> Удаление...';
-
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks/${taskId}`, {
           method: 'DELETE',
           headers: { 
@@ -1318,11 +1747,6 @@
       } catch (error) {
         console.error("Ошибка удаления задания:", error);
         showError(error.message || "Ошибка удаления задания");
-      } finally {
-        if (event.target) {
-          event.target.disabled = false;
-          event.target.textContent = originalText;
-        }
       }
     }
 
@@ -1367,6 +1791,15 @@
     function showConnectionError(show) {
       document.getElementById('connection-error').classList.toggle('hidden', !show);
       document.getElementById('app-container').style.display = show ? 'none' : 'block';
+    }
+
+    function getStatusText(status) {
+      const statuses = {
+        'pending': 'Ожидает',
+        'completed': 'Выполнено',
+        'rejected': 'Отклонено'
+      };
+      return statuses[status] || status;
     }
 
     async function init() {
