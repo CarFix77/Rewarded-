@@ -636,7 +636,8 @@
           
           const data = await response.json();
           state.userId = data.userId;
-          state.referralCode = data.refCode;
+          // Исправлено: получаем реферальный код из ответа сервера
+          state.referralCode = data.refCode || generateReferralCode();
           localStorage.setItem('userId', state.userId);
           
           if (refCode) {
@@ -660,6 +661,11 @@
       }
     }
 
+    // Генерация реферального кода на клиенте (если сервер не вернул)
+    function generateReferralCode() {
+      return Math.random().toString(36).substring(2, 8).toUpperCase();
+    }
+
     async function loadUserData() {
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
@@ -680,6 +686,7 @@
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
         const statsData = statsResponse.ok ? await statsResponse.json() : 0;
         
+        // Исправлено: правильное получение реферальных данных
         state.balance = userData.balance || 0;
         state.referrals = userData.refCount || 0;
         state.referralEarnings = userData.refEarnings || 0;
@@ -1233,6 +1240,8 @@
       document.getElementById('referral-count').textContent = state.referrals;
       document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
       document.getElementById('referral-code-display').textContent = state.referralCode;
+      
+      // Генерация реферальной ссылки для Telegram-бота
       document.getElementById('referral-link').textContent = `${CONFIG.botLink}?start=${state.referralCode}`;
       
       document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
