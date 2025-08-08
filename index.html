@@ -497,7 +497,7 @@
         </div>
 
         <div class="referral-link-container">
-          <div id="referral-link"></div>
+          <div id="referral-link">https://t.me/Ad_Rew_ards_bot?start=ABCDEF</div>
         </div>
         <button class="btn" onclick="copyReferralLink()">
           <span>📋</span> Копировать ссылку
@@ -579,7 +579,8 @@
       secretKey: "wagner46375",
       dailyLimit: 30,
       minWithdraw: 1.00,
-      referralPercent: 0.15
+      referralPercent: 0.15,
+      botLink: "https://t.me/Ad_Rew_ards_bot"
     };
 
     const state = {
@@ -616,7 +617,9 @@
         state.userId = localStorage.getItem('userId');
         
         if (!state.userId) {
-          const refCode = new URLSearchParams(window.location.search).get('ref');
+          const urlParams = new URLSearchParams(window.location.search);
+          const refCode = urlParams.get('ref') || urlParams.get('start');
+          
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
             headers: { 
@@ -681,7 +684,7 @@
         state.referrals = userData.refCount || 0;
         state.referralEarnings = userData.refEarnings || 0;
         state.referralCode = userData.refCode || state.referralCode;
-        state.adViews = statsData || 0;
+        state.adViews = statsData?.views || 0;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
         state.completedTasks = userData.completedTasks || [];
         
@@ -786,7 +789,7 @@
     }
 
     function copyReferralLink() {
-      const link = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
+      const link = `${CONFIG.botLink}?start=${state.referralCode}`;
       navigator.clipboard.writeText(link).then(() => {
         showNotification("Ссылка скопирована!");
       }).catch(err => {
@@ -837,7 +840,7 @@
         taskEl.innerHTML = `
           <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(2)})</span></h3>
           <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
-          <button class="btn ${isCompleted ? 'btn-disabled' : ''}" 
+          <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
             onclick="startTask('${task.id}')" 
             ${isCompleted ? 'disabled' : ''}>
             ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
@@ -1230,7 +1233,7 @@
       document.getElementById('referral-count').textContent = state.referrals;
       document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
       document.getElementById('referral-code-display').textContent = state.referralCode;
-      document.getElementById('referral-link').textContent = `${window.location.origin}${window.location.pathname}?ref=${state.referralCode}`;
+      document.getElementById('referral-link').textContent = `${CONFIG.botLink}?start=${state.referralCode}`;
       
       document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
     }
