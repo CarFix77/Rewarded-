@@ -31,7 +31,11 @@ app.use(async (ctx, next) => {
     await next();
   } catch (err) {
     ctx.response.status = 500;
-    ctx.response.body = { success: false, error: err.message };
+    ctx.response.body = { 
+      success: false, 
+      error: "Internal server error",
+      details: err.message 
+    };
   }
 });
 
@@ -41,6 +45,21 @@ function generateId() {
 }
 
 // Роуты
+router.get("/", (ctx) => {
+  ctx.response.body = {
+    status: "AdRewards API is running",
+    version: "1.0",
+    endpoints: {
+      register: "POST /register",
+      reward: "GET/POST /reward?userid=ID&secret=KEY",
+      user: "GET /user/:userId",
+      withdraw: "POST /withdraw",
+      tasks: "GET /tasks",
+      completeTask: "POST /complete-task"
+    }
+  };
+});
+
 router.post("/register", async (ctx) => {
   const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
@@ -56,86 +75,94 @@ router.post("/register", async (ctx) => {
     completed_tasks: []
   });
 
-  ctx.response.body = error
-    ? { success: false, error: "Registration failed" }
-    : { success: true, userId, refCode: userRefCode };
+  if (error) {
+    ctx.response.status = 400);
+    ctx.response.body = { success: false, error: error.message };
+    return;
+  }
+
+  ctx.response.body = {
+    success: true,
+    userId,
+    refCode: userRefCode,
+    refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
+  };
 });
 
 router.all("/reward", async (ctx) => {
-  const userId = ctx.state.body?.userId || ctx.request.url.searchParams.get("userid");
-  const secret = ctx.state.body?.secret || ctx.request.url.searchParams.get("secret");
+  let userId, secret;
+  
+  if (ctx.request.method === "POST") {
+    userId = ctx.state.body?.userId || ctx.state.body?.userid;
+    secret = ctx.state.body?.secret;
+  } else {
+    userId = ctx.request.url.searchParams.get("userid");
+    secret = ctx.request.url.searchParams.get("secret");
+  }
+
+  if (!userId) {
+    ctx.response.status = 400);
+    ctx.response.body = { success: false, error: "User ID is required" };
+    return;
+  }
 
   if (![CONFIG.SECRET_KEY, CONFIG.WEBHOOK_SECRET].includes(secret)) {
-    ctx.response.status = 401;
+    ctx.response.status = 401);
     ctx.response.body = { success: false, error: "Invalid secret" };
     return;
   }
 
-  const today = new Date().toISOString().split('T')[0];
-  const { data: user } = await supabase
+  const { data: user, error: userError } = await supabase
     .from('users')
     .select('*')
     .eq('id', userId)
     .single();
 
-  const viewsToday = user?.daily_views?.[today] || 0;
+  if (userError || !user) {
+    ctx.response.status = 404);
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const viewsToday = user.daily_views?.[today] || 0;
+
   if (viewsToday >= CONFIG.DAILY_LIMIT) {
-    ctx.response.status = 429;
+    ctx.response.status = 429);
     ctx.response.body = { success: false, error: "Daily limit reached" };
     return;
   }
 
-  await supabase
+  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+  const newViews = { ...user.daily_views, [today]: viewsToday + 1 };
+
+  const { error: updateError } = await supabase
     .from('users')
-    .update({
-      balance: user.balance + CONFIG.REWARD_PER_AD,
-      daily_views: { ...user.daily_views, [today]: viewsToday + 1 }
-    })
+    .update({ balance: newBalance, daily_views: newViews })
     .eq('id', userId);
 
-  ctx.response.body = {
-    success: true,
-    balance: user.balance + CONFIG.REWARD_PER_AD,
-    viewsToday: viewsToday + 1
-  };
-});
-
-router.post("/withdraw", async (ctx) => {
-  const { userId, wallet, amount } = ctx.state.body || {};
-  const { data: user } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Invalid amount" };
+  if (updateError) {
+    ctx.response.status = 500);
+    ctx.response.body = { success: false, error: "Database update failed" };
     return;
   }
 
-  const withdrawal = {
-    id: `wd_${generateId()}`,
-    amount,
-    wallet,
-    status: "pending",
-    created_at: new Date().toISOString()
+  ctx.response.body = {
+    success: true,
+    reward: CONFIG.REWARD_PER_AD,
+    balance: newBalance,
+    viewsToday: viewsToday + 1
   };
-
-  await supabase
-    .from('users')
-    .update({
-      balance: user.balance - amount,
-      withdrawals: [...user.withdrawals, withdrawal]
-    })
-    .eq('id', userId);
-
-  ctx.response.body = { success: true, withdrawalId: withdrawal.id };
 });
 
 // Запуск сервера
 app.use(router.routes());
 app.use(router.allowedMethods());
+
+app.use((ctx) => {
+  ctx.response.status = 404);
+  ctx.response.body = { success: false, error: "Endpoint not found" };
+});
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
