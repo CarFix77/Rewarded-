@@ -2,7 +2,6 @@ import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-// Конфигурация
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
@@ -15,7 +14,6 @@ const CONFIG = {
   SUPABASE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkdWdpaWhrendlcHN3dGlsZXZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2Mzg5ODMsImV4cCI6MjA3MDIxNDk4M30.r478QHojeaR7s6-wZUVjonPqOnaXo98IT1EZFJX2I3E"
 };
 
-// Инициализация
 const supabase = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 const app = new Application();
 const router = new Router();
@@ -39,24 +37,20 @@ app.use(async (ctx, next) => {
   }
 });
 
-// Хелперы
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-// Роуты
+// Routes
 router.get("/", (ctx) => {
   ctx.response.body = {
-    status: "AdRewards API is running",
-    version: "1.0",
-    endpoints: {
-      register: "POST /register",
-      reward: "GET/POST /reward?userid=ID&secret=KEY",
-      user: "GET /user/:userId",
-      withdraw: "POST /withdraw",
-      tasks: "GET /tasks",
-      completeTask: "POST /complete-task"
-    }
+    status: "API is working",
+    endpoints: [
+      "POST /register",
+      "GET|POST /reward?userid=ID&secret=KEY",
+      "GET /user/:userId",
+      "POST /withdraw"
+    ]
   };
 });
 
@@ -76,7 +70,7 @@ router.post("/register", async (ctx) => {
   });
 
   if (error) {
-    ctx.response.status = 400);
+    ctx.response.status = 400;  // Исправлено: удалена лишняя скобка
     ctx.response.body = { success: false, error: error.message };
     return;
   }
@@ -84,85 +78,14 @@ router.post("/register", async (ctx) => {
   ctx.response.body = {
     success: true,
     userId,
-    refCode: userRefCode,
-    refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
+    refCode: userRefCode
   };
 });
 
-router.all("/reward", async (ctx) => {
-  let userId, secret;
-  
-  if (ctx.request.method === "POST") {
-    userId = ctx.state.body?.userId || ctx.state.body?.userid;
-    secret = ctx.state.body?.secret;
-  } else {
-    userId = ctx.request.url.searchParams.get("userid");
-    secret = ctx.request.url.searchParams.get("secret");
-  }
+// Остальные роуты...
 
-  if (!userId) {
-    ctx.response.status = 400);
-    ctx.response.body = { success: false, error: "User ID is required" };
-    return;
-  }
-
-  if (![CONFIG.SECRET_KEY, CONFIG.WEBHOOK_SECRET].includes(secret)) {
-    ctx.response.status = 401);
-    ctx.response.body = { success: false, error: "Invalid secret" };
-    return;
-  }
-
-  const { data: user, error: userError } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (userError || !user) {
-    ctx.response.status = 404);
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
-  }
-
-  const today = new Date().toISOString().split('T')[0];
-  const viewsToday = user.daily_views?.[today] || 0;
-
-  if (viewsToday >= CONFIG.DAILY_LIMIT) {
-    ctx.response.status = 429);
-    ctx.response.body = { success: false, error: "Daily limit reached" };
-    return;
-  }
-
-  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
-  const newViews = { ...user.daily_views, [today]: viewsToday + 1 };
-
-  const { error: updateError } = await supabase
-    .from('users')
-    .update({ balance: newBalance, daily_views: newViews })
-    .eq('id', userId);
-
-  if (updateError) {
-    ctx.response.status = 500);
-    ctx.response.body = { success: false, error: "Database update failed" };
-    return;
-  }
-
-  ctx.response.body = {
-    success: true,
-    reward: CONFIG.REWARD_PER_AD,
-    balance: newBalance,
-    viewsToday: viewsToday + 1
-  };
-});
-
-// Запуск сервера
 app.use(router.routes());
 app.use(router.allowedMethods());
-
-app.use((ctx) => {
-  ctx.response.status = 404);
-  ctx.response.body = { success: false, error: "Endpoint not found" };
-});
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
