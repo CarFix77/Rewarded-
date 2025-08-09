@@ -4,6 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
+  AD_VIEWS_PER_BONUS: 100,     // Новый параметр: просмотры для бонуса
+  BONUS_PER_AD_VIEWS: 0.0009,  // Новый параметр: размер бонуса
   SECRET_KEY: "wagner46375",
   WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
@@ -124,6 +126,7 @@ router.post("/register", async (ctx) => {
       ref_code: userRefCode,
       ref_count: 0,
       ref_earnings: 0,
+      total_views: 0, // Добавляем счетчик общего просмотров
       created_at: new Date().toISOString()
     });
 
@@ -208,7 +211,15 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+  // Рассчитываем бонус за каждые 100 просмотров
+  const totalViews = (user.total_views || 0) + 1;
+  let bonus = 0;
+  
+  if (totalViews % CONFIG.AD_VIEWS_PER_BONUS === 0) {
+    bonus = CONFIG.BONUS_PER_AD_VIEWS;
+  }
+
+  const newBalance = user.balance + CONFIG.REWARD_PER_AD + bonus;
   
   // Обновляем счетчик просмотров
   const { error: viewError } = await supabase
@@ -219,10 +230,13 @@ router.all("/reward", async (ctx) => {
       count: dailyViews + 1
     }, { onConflict: "user_id,date" });
 
-  // Обновляем баланс
+  // Обновляем баланс и счетчик просмотров
   const { error: userUpdateError } = await supabase
     .from("users")
-    .update({ balance: newBalance })
+    .update({ 
+      balance: newBalance,
+      total_views: totalViews
+    })
     .eq("user_id", userId);
 
   if (viewError || userUpdateError) {
@@ -234,8 +248,10 @@ router.all("/reward", async (ctx) => {
   ctx.response.body = {
     success: true,
     reward: CONFIG.REWARD_PER_AD,
+    bonus: bonus,
     balance: newBalance,
-    viewsToday: dailyViews + 1
+    viewsToday: dailyViews + 1,
+    totalViews: totalViews
   };
 });
 
@@ -351,9 +367,23 @@ router.get("/tasks", async (ctx) => {
     return;
   }
 
+  // Добавляем автоматическое задание за просмотры
+  const adViewsTask = {
+    task_id: "task_ad_views",
+    title: "Просмотр рекламы",
+    description: `За каждые ${CONFIG.AD_VIEWS_PER_BONUS} просмотров рекламы вы получаете $${CONFIG.BONUS_PER_AD_VIEWS.toFixed(4)} бонуса!`,
+    reward: CONFIG.BONUS_PER_AD_VIEWS,
+    url: "#",
+    cooldown: 0
+  };
+
   ctx.response.body = {
     success: true,
-    tasks: [...(tasks || []), ...(customTasks || [])]
+    tasks: [
+      ...(tasks || []), 
+      ...(customTasks || []), 
+      adViewsTask
+    ]
   };
 });
 
