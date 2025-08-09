@@ -15,6 +15,7 @@
       --secondary-text: #8fa89a;
       --accent-color: #3d9970;
       --error-color: #c0392b;
+      --bonus-color: #f39c12;
     }
 
     * {
@@ -126,6 +127,21 @@
       transition: width 0.3s ease;
     }
 
+    .bonus-progress {
+      height: 12px;
+      background: var(--bg-color);
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 10px 0;
+    }
+    
+    .bonus-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--bonus-color), #e67e22);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
     .referral-stats {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -167,22 +183,13 @@
       color: var(--accent-color);
       font-weight: bold;
     }
+    
+    .bonus-reward {
+      color: var(--bonus-color);
+      font-weight: bold;
+    }
 
     .admin-task-item {
-      margin-bottom: 15px;
-      padding: 15px;
-      background: rgba(0, 0, 0, 0.1);
-      border-radius: 8px;
-      border: 1px solid var(--primary-dark);
-    }
-
-    .admin-actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 10px;
-    }
-
-    .withdrawal-item {
       margin-bottom: 15px;
       padding: 15px;
       background: rgba(0, 0, 0, 0.1);
@@ -381,6 +388,17 @@
       padding: 20px;
       text-align: center;
     }
+    
+    .bonus-indicator {
+      display: inline-block;
+      padding: 2px 8px;
+      background: var(--bonus-color);
+      color: white;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 5px;
+    }
   </style>
 </head>
 <body>
@@ -416,6 +434,19 @@
           </div>
           <div class="progress-bar">
             <div class="progress-fill" id="ad-progress"></div>
+          </div>
+        </div>
+        
+        <div class="progress-container">
+          <div class="progress-text">
+            <span>Всего просмотров: <span id="total-views">0</span></span>
+            <span id="bonus-indicator" class="bonus-indicator hidden">Бонус скоро!</span>
+          </div>
+          <div class="bonus-progress">
+            <div class="bonus-fill" id="bonus-progress"></div>
+          </div>
+          <div style="text-align: center; margin-top: 5px; font-size: 14px; color: var(--bonus-color);">
+            +$0.005 за каждые 200 просмотров
           </div>
         </div>
       </div>
@@ -580,13 +611,16 @@
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15,
-      botLink: "https://t.me/Ad_Rew_ards_bot"
+      botLink: "https://t.me/Ad_Rew_ards_bot",
+      bonusThreshold: 200,   // Каждые 200 просмотров
+      bonusAmount: 0.005     // Награда за каждые 200 просмотров
     };
 
     const state = {
       userId: null,
       balance: 0,
       adViews: 0,
+      totalViews: 0,
       isAdBlocked: false,
       referrals: 0,
       referralEarnings: 0,
@@ -612,7 +646,6 @@
       };
     }
 
-    // Генерация реферального кода на клиенте (резервный вариант)
     function generateReferralCode() {
       return Math.random().toString(36).substring(2, 10).toUpperCase();
     }
@@ -641,10 +674,7 @@
           
           const data = await response.json();
           state.userId = data.userId;
-          
-          // ГАРАНТИРОВАННОЕ ПОЛУЧЕНИЕ РЕФЕРАЛЬНОГО КОДА
           state.referralCode = data.refCode || generateReferralCode();
-          
           localStorage.setItem('userId', state.userId);
           
           if (refCode) {
@@ -688,14 +718,11 @@
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
         const statsData = statsResponse.ok ? await statsResponse.json() : { views: 0 };
         
-        // ГАРАНТИРОВАННОЕ ПОЛУЧЕНИЕ РЕФЕРАЛЬНЫХ ДАННЫХ
         state.balance = userData.balance || 0;
-        state.referrals = userData.refCount || 0;
-        state.referralEarnings = userData.refEarnings || 0;
-        
-        // Сохраняем реферальный код из профиля пользователя
-        state.referralCode = userData.refCode || state.referralCode || generateReferralCode();
-        
+        state.referrals = userData.ref_count || 0;
+        state.referralEarnings = userData.ref_earnings || 0;
+        state.totalViews = userData.total_views || 0;
+        state.referralCode = userData.ref_code || state.referralCode || generateReferralCode();
         state.adViews = statsData.views || 0;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
         state.completedTasks = userData.completedTasks || [];
@@ -731,10 +758,17 @@
         const result = await response.json();
         state.balance = result.balance;
         state.adViews = result.viewsToday;
+        state.totalViews = result.totalViews;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
         
         updateUI();
-        showNotification(`+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`);
+        
+        // Показываем уведомление
+        let notification = `+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`;
+        if (result.bonusReward > 0) {
+          notification += ` +$${result.bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!`;
+        }
+        showNotification(notification);
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка при просмотре рекламы");
@@ -846,18 +880,46 @@
       }
       
       state.tasks.forEach(task => {
-        const isCompleted = state.completedTasks.includes(task.id);
-        const taskEl = document.createElement('div');
-        taskEl.className = 'task-item';
-        taskEl.innerHTML = `
-          <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(2)})</span></h3>
-          <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
-          <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
-            onclick="startTask('${task.id}')" 
-            ${isCompleted ? 'disabled' : ''}>
-            ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
-          </button>`;
-        container.appendChild(taskEl);
+        if (task.is_system) {
+          // Системное задание для просмотров рекламы
+          const progress = state.totalViews % CONFIG.bonusThreshold;
+          const progressPercent = (progress / CONFIG.bonusThreshold) * 100;
+          const nextBonus = CONFIG.bonusThreshold - progress;
+          
+          const taskEl = document.createElement('div');
+          taskEl.className = 'task-item';
+          taskEl.innerHTML = `
+            <h3>${task.title}</h3>
+            <p>${task.description}</p>
+            
+            <div class="progress-container">
+              <div>До следующего бонуса: ${nextBonus}/${CONFIG.bonusThreshold} просмотров</div>
+              <div class="bonus-progress">
+                <div class="bonus-fill" style="width: ${progressPercent}%"></div>
+              </div>
+            </div>
+            
+            <p class="bonus-reward">+$${CONFIG.bonusAmount.toFixed(3)} за каждые ${CONFIG.bonusThreshold} просмотров</p>
+            <p style="color: var(--secondary-text); margin-top: 10px;">
+              Всего просмотров: ${state.totalViews}
+            </p>
+          `;
+          container.appendChild(taskEl);
+        } else {
+          // Обычные задания
+          const isCompleted = state.completedTasks.includes(task.id);
+          const taskEl = document.createElement('div');
+          taskEl.className = 'task-item';
+          taskEl.innerHTML = `
+            <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(3)})</span></h3>
+            <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
+            <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
+              onclick="startTask('${task.id}')" 
+              ${isCompleted ? 'disabled' : ''}>
+              ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
+            </button>`;
+          container.appendChild(taskEl);
+        }
       });
     }
 
@@ -890,15 +952,16 @@
         });
         
         if (!response.ok) {
-          throw new Error("Ошибка выполнения задания");
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Ошибка выполнения задания");
         }
         
         const result = await response.json();
         state.balance = result.balance;
-        state.completedTasks = result.completedTasks;
+        state.completedTasks = [...state.completedTasks, taskId];
         updateUI();
         renderTasks();
-        showNotification("Задание выполнено!");
+        showNotification(`Задание выполнено! +$${result.reward.toFixed(3)}`);
       } catch (error) {
         console.error("Ошибка выполнения задания:", error);
         showError(error.message || "Ошибка выполнения задания");
@@ -1054,7 +1117,6 @@
     }
 
     async function deleteWithdrawal(id) {
-      // Оптимистичное обновление - сразу удаляем из интерфейса
       const container = document.getElementById('withdrawals-list');
       const items = container.querySelectorAll('.withdrawal-item');
       items.forEach(item => {
@@ -1080,7 +1142,6 @@
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка удаления заявки");
-        // Если ошибка - перезагружаем список
         loadWithdrawals();
       }
     }
@@ -1240,12 +1301,27 @@
       document.getElementById('balance').textContent = `$${state.balance.toFixed(3)}`;
       document.getElementById('available-balance').textContent = `$${state.balance.toFixed(3)}`;
       document.getElementById('ad-counter').textContent = state.adViews;
+      document.getElementById('total-views').textContent = state.totalViews;
       document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
+      
+      // Прогресс бонусных просмотров
+      const bonusProgress = state.totalViews % CONFIG.bonusThreshold;
+      const bonusProgressPercent = (bonusProgress / CONFIG.bonusThreshold) * 100;
+      document.getElementById('bonus-progress').style.width = `${bonusProgressPercent}%`;
+      
+      // Показываем индикатор, если до бонуса осталось мало просмотров
+      const bonusIndicator = document.getElementById('bonus-indicator');
+      const viewsToBonus = CONFIG.bonusThreshold - bonusProgress;
+      if (viewsToBonus <= 20 && viewsToBonus > 0) {
+        bonusIndicator.textContent = `До бонуса: ${viewsToBonus}`;
+        bonusIndicator.classList.remove('hidden');
+      } else {
+        bonusIndicator.classList.add('hidden');
+      }
       
       document.getElementById('referral-count').textContent = state.referrals;
       document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
       
-      // ГАРАНТИРОВАННОЕ ОТОБРАЖЕНИЕ РЕФЕРАЛЬНОГО КОДА
       const referralCodeDisplay = document.getElementById('referral-code-display');
       const referralLink = document.getElementById('referral-link');
       
@@ -1254,7 +1330,6 @@
         referralCodeDisplay.style.color = "var(--accent-color)";
         referralLink.textContent = `${CONFIG.botLink}?start=${state.referralCode}`;
       } else {
-        // Если код почему-то отсутствует, покажем предупреждение
         referralCodeDisplay.textContent = "Ошибка загрузки кода";
         referralCodeDisplay.style.color = "var(--error-color)";
         referralLink.textContent = "Обновите страницу или обратитесь в поддержку";
