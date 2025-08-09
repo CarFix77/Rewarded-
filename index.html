@@ -381,6 +381,17 @@
       padding: 20px;
       text-align: center;
     }
+    
+    /* Анимация для кнопки задания */
+    .task-btn-pending {
+      animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+      100% { transform: scale(1); }
+    }
   </style>
 </head>
 <body>
@@ -580,20 +591,24 @@
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15,
-      botLink: "https://t.me/Ad_Rew_ards_bot"
+      botLink: "https://t.me/Ad_Rew_ards_bot",
+      adViewsPerBonus: 100,
+      bonusPerAdViews: 0.0009
     };
 
     const state = {
       userId: null,
       balance: 0,
       adViews: 0,
+      totalViews: 0,
       isAdBlocked: false,
       referrals: 0,
       referralEarnings: 0,
       referralCode: "",
       completedTasks: [],
       adminToken: null,
-      tasks: []
+      tasks: [],
+      completedAdTasks: 0
     };
 
     function generateTaskId() {
@@ -692,6 +707,7 @@
         state.balance = userData.balance || 0;
         state.referrals = userData.refCount || 0;
         state.referralEarnings = userData.refEarnings || 0;
+        state.totalViews = userData.total_views || 0;
         
         // Сохраняем реферальный код из профиля пользователя
         state.referralCode = userData.refCode || state.referralCode || generateReferralCode();
@@ -699,6 +715,7 @@
         state.adViews = statsData.views || 0;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
         state.completedTasks = userData.completedTasks || [];
+        state.completedAdTasks = Math.floor(state.totalViews / CONFIG.adViewsPerBonus);
         
         updateUI();
       } catch (error) {
@@ -731,7 +748,14 @@
         const result = await response.json();
         state.balance = result.balance;
         state.adViews = result.viewsToday;
+        state.totalViews = result.totalViews;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
+        
+        // Проверяем, получили ли мы бонус
+        if (result.bonus > 0) {
+          state.completedAdTasks++;
+          showNotification(`Бонус за ${CONFIG.adViewsPerBonus} просмотров! +$${result.bonus.toFixed(4)}`);
+        }
         
         updateUI();
         showNotification(`+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`);
@@ -845,14 +869,45 @@
         return;
       }
       
+      // Задание за просмотры рекламы
+      const adViewsTask = {
+        id: "task_ad_views",
+        title: "Просмотр рекламы",
+        description: `За каждые ${CONFIG.adViewsPerBonus} просмотров рекламы вы получаете $${CONFIG.bonusPerAdViews.toFixed(4)} бонуса!`,
+        reward: CONFIG.bonusPerAdViews,
+        url: "#",
+        cooldown: 0
+      };
+      
+      // Добавляем задание за просмотры
+      const adTaskElement = document.createElement('div');
+      adTaskElement.className = 'task-item';
+      adTaskElement.innerHTML = `
+        <h3>${adViewsTask.title} <span class="task-reward">(+$${adViewsTask.reward.toFixed(4)})</span></h3>
+        <p style="margin: 10px 0;">${adViewsTask.description}</p>
+        <div class="progress-bar" style="height: 8px; margin: 10px 0; background: var(--bg-color); border-radius: 4px;">
+          <div class="progress-fill" style="height: 100%; background: linear-gradient(90deg, var(--primary-color), var(--accent-color)); width: ${(state.totalViews % CONFIG.adViewsPerBonus) / CONFIG.adViewsPerBonus * 100}%"></div>
+        </div>
+        <div style="text-align: center; color: var(--secondary-text); font-size: 14px; margin-top: 5px;">
+          Прогресс: ${state.totalViews % CONFIG.adViewsPerBonus}/${CONFIG.adViewsPerBonus} просмотров
+        </div>
+        <button class="btn" disabled>
+          ${state.completedAdTasks > 0 ? '✅ Бонус получен' : 'Автоматическое задание'}
+        </button>`;
+      container.appendChild(adTaskElement);
+      
+      // Остальные задания
       state.tasks.forEach(task => {
+        if (task.id === "task_ad_views") return; // Пропускаем если уже добавили
+        
         const isCompleted = state.completedTasks.includes(task.id);
         const taskEl = document.createElement('div');
         taskEl.className = 'task-item';
         taskEl.innerHTML = `
           <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(2)})</span></h3>
           <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
-          <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
+          <button class="btn ${isCompleted ? 'btn-delete' : ''} task-btn" 
+            data-task-id="${task.id}"
             onclick="startTask('${task.id}')" 
             ${isCompleted ? 'disabled' : ''}>
             ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
@@ -870,11 +925,30 @@
         return;
       }
 
-      window.open(task.url, '_blank');
-      showNotification(`У вас есть ${task.cooldown} секунд на выполнение задания!`);
+      // Находим кнопку задания и обновляем ее состояние
+      const taskButtons = document.querySelectorAll('.task-btn');
+      const currentBtn = Array.from(taskButtons).find(btn => 
+        btn.dataset.taskId === taskId
+      );
       
+      if (currentBtn) {
+        currentBtn.disabled = true;
+        currentBtn.classList.add('task-btn-pending');
+        currentBtn.innerHTML = '<span>⏳</span> Задание выполняется...';
+      }
+
+      // Открываем задание в новой вкладке
+      window.open(task.url, '_blank');
+      
+      // Запускаем выполнение задания без уведомления о времени
       setTimeout(async () => {
         await completeTask(taskId);
+        
+        // Возвращаем кнопку в исходное состояние
+        if (currentBtn) {
+          currentBtn.classList.remove('task-btn-pending');
+          currentBtn.innerHTML = '✅ Выполнено';
+        }
       }, task.cooldown * 1000);
     }
 
