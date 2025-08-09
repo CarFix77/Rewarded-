@@ -9,10 +9,11 @@ const CONFIG = {
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: "8223Nn8223"
+  ADMIN_PASSWORD: "8223Nn8223",
+  BONUS_THRESHOLD: 200,    // Каждые 200 просмотров
+  BONUS_AMOUNT: 0.005      // Награда за каждые 200 просмотров
 };
 
-// Инициализация Supabase
 const supabase = createClient(
   "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
@@ -21,7 +22,6 @@ const supabase = createClient(
 const app = new Application();
 const router = new Router();
 
-// ================== MIDDLEWARES ================== //
 app.use(async (ctx, next) => {
   try {
     await next();
@@ -59,20 +59,17 @@ app.use(async (ctx, next) => {
   await next();
 });
 
-// ================== HELPERS ================== //
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
 async function cleanupOldData() {
   try {
-    // Удаляем просмотры старше 7 дней
     await supabase
       .from("views")
       .delete()
       .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
-    // Удаляем неактивных пользователей
     const { data: inactiveUsers } = await supabase
       .from("users")
       .select("user_id")
@@ -93,7 +90,6 @@ async function cleanupOldData() {
         .in("user_id", userIds);
     }
 
-    // Удаляем старые выводы
     await supabase
       .from("withdrawals")
       .delete()
@@ -110,17 +106,18 @@ setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 cleanupOldData();
 
 // ================== ROUTES ================== //
+
 router.post("/register", async (ctx) => {
   const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
   const userRefCode = generateId().toString();
 
-  // Создаем пользователя
   const { error } = await supabase
     .from("users")
     .insert({
       user_id: userId,
       balance: 0,
+      total_views: 0,
       ref_code: userRefCode,
       ref_count: 0,
       ref_earnings: 0,
@@ -133,7 +130,6 @@ router.post("/register", async (ctx) => {
     return;
   }
 
-  // Обработка реферала
   if (refCode) {
     const { data: referrer } = await supabase
       .from("users")
@@ -187,7 +183,6 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  // Получаем пользователя и сегодняшние просмотры
   const today = new Date().toISOString().split("T")[0];
   
   const [{ data: user, error: userError }, { data: viewsData, error: viewsError }] = await Promise.all([
@@ -208,9 +203,19 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  const newBalance = user.balance + CONFIG.REWARD_PER_AD;
+  // Рассчитываем бонус за накопленные просмотры
+  const newTotalViews = (user.total_views || 0) + 1;
+  let bonusReward = 0;
   
-  // Обновляем счетчик просмотров
+  if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
+    bonusReward = CONFIG.BONUS_AMOUNT;
+    console.log(`Начисление бонуса за ${CONFIG.BONUS_THRESHOLD} просмотров: $${CONFIG.BONUS_AMOUNT}`);
+  }
+
+  const totalReward = CONFIG.REWARD_PER_AD + bonusReward;
+  const newBalance = user.balance + totalReward;
+  
+  // Обновляем данные
   const { error: viewError } = await supabase
     .from("views")
     .upsert({
@@ -219,10 +224,12 @@ router.all("/reward", async (ctx) => {
       count: dailyViews + 1
     }, { onConflict: "user_id,date" });
 
-  // Обновляем баланс
   const { error: userUpdateError } = await supabase
     .from("users")
-    .update({ balance: newBalance })
+    .update({ 
+      balance: newBalance,
+      total_views: newTotalViews 
+    })
     .eq("user_id", userId);
 
   if (viewError || userUpdateError) {
@@ -233,9 +240,12 @@ router.all("/reward", async (ctx) => {
 
   ctx.response.body = {
     success: true,
-    reward: CONFIG.REWARD_PER_AD,
+    reward: totalReward,
+    baseReward: CONFIG.REWARD_PER_AD,
+    bonusReward: bonusReward,
     balance: newBalance,
-    viewsToday: dailyViews + 1
+    viewsToday: dailyViews + 1,
+    totalViews: newTotalViews
   };
 });
 
@@ -253,7 +263,6 @@ router.get("/user/:userId", async (ctx) => {
     return;
   }
   
-  // Получаем выполненные задания
   const { data: completedTasks } = await supabase
     .from("completed_tasks")
     .select("task_id")
@@ -284,14 +293,12 @@ router.get("/views/:userId/:date", async (ctx) => {
 router.post("/withdraw", async (ctx) => {
   const { userId, wallet, amount } = ctx.state.body || {};
   
-  // Проверка данных
   if (!userId || !wallet || !amount) {
     ctx.response.status = 400;
     ctx.response.body = { success: false, error: "Missing parameters" };
     return;
   }
 
-  // Проверяем пользователя
   const { data: user, error: userError } = await supabase
     .from("users")
     .select("balance")
@@ -304,14 +311,12 @@ router.post("/withdraw", async (ctx) => {
     return;
   }
 
-  // Проверяем сумму
   if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
     ctx.response.status = 400;
     ctx.response.body = { success: false, error: "Invalid withdrawal amount" };
     return;
   }
 
-  // Создаем запрос на вывод
   const withdrawId = `wd_${generateId()}`;
   const { error: withdrawError } = await supabase.from("withdrawals").insert({
     withdrawal_id: withdrawId,
@@ -327,7 +332,6 @@ router.post("/withdraw", async (ctx) => {
     return;
   }
 
-  // Обновляем баланс
   await supabase
     .from("users")
     .update({ balance: user.balance - amount })
@@ -351,9 +355,20 @@ router.get("/tasks", async (ctx) => {
     return;
   }
 
+  // Добавляем системное задание для просмотров
+  const adWatchTask = {
+    task_id: "system_ad_watching",
+    title: "Просмотр рекламы",
+    description: "Смотрите рекламные ролики и получайте вознаграждение",
+    reward: 0,
+    url: "#",
+    cooldown: 0,
+    is_system: true
+  };
+
   ctx.response.body = {
     success: true,
-    tasks: [...(tasks || []), ...(customTasks || [])]
+    tasks: [...(tasks || []), ...(customTasks || []), adWatchTask]
   };
 });
 
@@ -361,6 +376,9 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   const userId = ctx.params.userId;
   const { taskId } = ctx.state.body || {};
   
+  console.log(`Complete task request: user=${userId}, task=${taskId}`);
+  
+  // 1. Verify user exists
   const { data: user, error: userError } = await supabase
     .from("users")
     .select("*")
@@ -368,48 +386,68 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     .single();
   
   if (userError || !user) {
+    console.error("User not found:", userId);
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "User not found" };
     return;
   }
   
   if (!taskId) {
+    console.error("Task ID missing");
     ctx.response.status = 400;
     ctx.response.body = { success: false, error: "Task ID is required" };
     return;
   }
   
-  // Проверяем, выполнено ли задание
-  const { data: completedTask, error: completedError } = await supabase
-    .from("completed_tasks")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("task_id", taskId)
-    .single();
+  // 2. Try to record task completion (will fail if already completed)
+  try {
+    const { error } = await supabase
+      .from("completed_tasks")
+      .insert({
+        user_id: userId,
+        task_id: taskId,
+        completed_at: new Date().toISOString()
+      });
 
-  if (completedTask) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Task already completed" };
+    if (error) {
+      if (error.code === "23505") { // Unique violation
+        console.log("Task already completed:", taskId);
+        ctx.response.status = 400;
+        ctx.response.body = { success: false, error: "Task already completed" };
+        return;
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error("Task completion record error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { 
+      success: false, 
+      error: "Failed to record task completion" 
+    };
     return;
   }
   
-  // Получаем информацию о задании
+  // 3. Find task in database
   let task = null;
   
-  const { data: taskData, error: taskError } = await supabase
+  // Check main tasks
+  const { data: taskData } = await supabase
     .from("tasks")
     .select("*")
     .eq("task_id", taskId)
-    .single();
+    .maybeSingle();
 
-  if (!taskError && taskData) {
+  if (taskData) {
     task = taskData;
-  } else {
-    const { data: customTaskData, error: customTaskError } = await supabase
+  } 
+  // Check custom tasks
+  else {
+    const { data: customTaskData } = await supabase
       .from("custom_tasks")
       .select("*")
       .eq("task_id", taskId)
-      .single();
+      .maybeSingle();
       
     if (customTaskData) {
       task = customTaskData;
@@ -417,30 +455,32 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   }
   
   if (!task) {
+    console.error("Task not found:", taskId);
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "Task not found" };
     return;
   }
   
-  // Добавляем в выполненные задания
-  await supabase
-    .from("completed_tasks")
-    .insert({
-      user_id: userId,
-      task_id: taskId,
-      completed_at: new Date().toISOString()
-    });
-  
-  // Обновляем баланс
+  // 4. Award task reward
   const newBalance = user.balance + task.reward;
-  await supabase
+  const { error: balanceError } = await supabase
     .from("users")
     .update({ balance: newBalance })
     .eq("user_id", userId);
+
+  if (balanceError) {
+    console.error("Balance update error:", balanceError);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Balance update failed" };
+    return;
+  }
+  
+  console.log(`Task completed: user=${userId}, task=${taskId}, reward=$${task.reward}`);
   
   ctx.response.body = {
     success: true,
-    balance: newBalance
+    balance: newBalance,
+    reward: task.reward
   };
 });
 
@@ -627,4 +667,4 @@ app.use((ctx) => {
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-await app.listen({ port });    
+await app.listen({ port });
