@@ -690,7 +690,6 @@
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15,
-      // ПАРОЛЬ УДАЛЕН ИЗ КЛИЕНТСКОГО КОДА
       botLink: "https://t.me/Ad_Rew_ards_bot",
       bonusThreshold: 200,
       bonusAmount: 0.005
@@ -707,7 +706,8 @@
       referralCode: "",
       completedTasks: [],
       adminToken: null,
-      tasks: []
+      tasks: [],
+      currentWithdrawalFilter: 'pending' // Для сохранения текущего фильтра
     };
 
     function generateTaskId() {
@@ -994,7 +994,7 @@
           `;
           container.appendChild(taskEl);
         } else {
-          // Обычные задания
+          // Обычные задания - УБРАН ТАЙМЕР ИЗ ОТОБРАЖЕНИЯ
           const isCompleted = state.completedTasks.includes(task.id);
           const taskEl = document.createElement('div');
           taskEl.className = 'task-card';
@@ -1009,14 +1009,10 @@
             <div class="task-description">${task.description}</div>
             
             <div class="task-footer">
-              <div class="task-cooldown">
-                <span>⏱️ Таймер: ${task.cooldown} сек</span>
-              </div>
-              
               <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
                 onclick="startTask('${task.id}')" 
                 ${isCompleted ? 'disabled' : ''}
-                style="width: auto; padding: 10px 20px;">
+                style="width: 100%;">
                 ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
               </button>
             </div>
@@ -1094,7 +1090,6 @@
       document.getElementById('admin-password').value = '';
     }
 
-    // Функция проверки пароля - теперь пароль проверяется на сервере
     async function checkAdminPassword() {
       const password = document.getElementById('admin-password').value;
       
@@ -1140,6 +1135,8 @@
 
     async function loadWithdrawals(filter = 'pending') {
       try {
+        state.currentWithdrawalFilter = filter; // Сохраняем текущий фильтр
+        
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
           headers: { 
             'Authorization': `Bearer ${state.adminToken}`,
@@ -1178,9 +1175,13 @@
       withdrawals.forEach(withdrawal => {
         const item = document.createElement('div');
         item.className = 'withdrawal-item';
+        
+        // ИСПРАВЛЕНИЕ: используем withdrawal.withdrawal_id вместо withdrawal.id
+        const withdrawalId = withdrawal.withdrawal_id || withdrawal.id;
+        
         item.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong>#${withdrawal.id}</strong>
+            <strong>#${withdrawalId}</strong>
             <div>
               <span>$${(withdrawal.amount || 0).toFixed(2)}</span>
               <span class="status-badge status-${withdrawal.status}">
@@ -1195,14 +1196,14 @@
           </div>
           <div class="admin-actions">
             ${withdrawal.status === 'pending' ? `
-            <button class="btn" onclick="processWithdrawal('${withdrawal.id}', 'completed')">
+            <button class="btn" onclick="processWithdrawal('${withdrawalId}', 'completed')">
               Одобрить
             </button>
-            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.id}', 'rejected')">
+            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawalId}', 'rejected')">
               Отклонить
             </button>
             ` : ''}
-            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.id}')">
+            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawalId}')">
               Удалить
             </button>
           </div>`;
@@ -1227,7 +1228,9 @@
         }
         
         showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
-        loadWithdrawals('pending');
+        
+        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
+        loadWithdrawals(state.currentWithdrawalFilter);
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка обработки заявки");
@@ -1235,14 +1238,6 @@
     }
 
     async function deleteWithdrawal(id) {
-      const container = document.getElementById('withdrawals-list');
-      const items = container.querySelectorAll('.withdrawal-item');
-      items.forEach(item => {
-        if (item.textContent.includes(`#${id}`)) {
-          item.remove();
-        }
-      });
-
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
           method: 'DELETE',
@@ -1257,10 +1252,12 @@
         }
         
         showNotification(`Заявка #${id} удалена!`);
+        
+        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
+        loadWithdrawals(state.currentWithdrawalFilter);
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка удаления заявки");
-        loadWithdrawals();
       }
     }
 
