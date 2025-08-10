@@ -173,20 +173,77 @@
       text-align: center;
     }
 
+    .task-card {
+      background-color: var(--card-color);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--primary-dark);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .task-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+    
+    .task-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 15px;
+    }
+    
+    .task-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+    
+    .task-title {
+      font-size: 18px;
+      font-weight: 600;
+      flex: 1;
+    }
+    
+    .task-reward {
+      color: var(--bonus-color);
+      font-weight: bold;
+      font-size: 18px;
+    }
+    
+    .task-description {
+      white-space: pre-line;
+      margin: 15px 0;
+      line-height: 1.5;
+      color: var(--secondary-text);
+    }
+    
+    .task-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 15px;
+    }
+    
+    .task-cooldown {
+      font-size: 14px;
+      color: var(--secondary-text);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    
     .task-item {
       margin-bottom: 20px;
       padding-bottom: 20px;
       border-bottom: 1px solid var(--primary-dark);
-    }
-
-    .task-reward {
-      color: var(--accent-color);
-      font-weight: bold;
-    }
-    
-    .bonus-reward {
-      color: var(--bonus-color);
-      font-weight: bold;
     }
 
     .admin-task-item {
@@ -398,6 +455,28 @@
       font-size: 12px;
       font-weight: bold;
       margin-left: 5px;
+    }
+
+    @media (max-width: 480px) {
+      .task-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+      
+      .task-title {
+        font-size: 16px;
+      }
+      
+      .task-footer {
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      
+      .task-footer .btn {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -611,9 +690,10 @@
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15,
+      // ПАРОЛЬ УДАЛЕН ИЗ КЛИЕНТСКОГО КОДА
       botLink: "https://t.me/Ad_Rew_ards_bot",
-      bonusThreshold: 200,   // Каждые 200 просмотров
-      bonusAmount: 0.005     // Награда за каждые 200 просмотров
+      bonusThreshold: 200,
+      bonusAmount: 0.005
     };
 
     const state = {
@@ -636,7 +716,7 @@
 
     function normalizeTask(task) {
       return {
-        id: task?.id || generateTaskId(),
+        id: task?.task_id || task?.id || generateTaskId(),
         title: task?.title || 'Без названия',
         reward: Math.max(0.01, Number(task?.reward) || 0.01),
         description: task?.description || '',
@@ -806,8 +886,8 @@
         const response = await fetch(`${CONFIG.apiUrl}/withdraw`, {
           method: 'POST',
           headers: { 
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
           },
           body: JSON.stringify({
             userId: state.userId,
@@ -873,9 +953,11 @@
       
       if (!state.tasks || state.tasks.length === 0) {
         container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
-            Нет доступных заданий
-          </p>`;
+          <div class="task-card" style="text-align: center;">
+            <p style="color: var(--secondary-text);">
+              Нет доступных заданий
+            </p>
+          </div>`;
         return;
       }
       
@@ -887,10 +969,15 @@
           const nextBonus = CONFIG.bonusThreshold - progress;
           
           const taskEl = document.createElement('div');
-          taskEl.className = 'task-item';
+          taskEl.className = 'task-card';
           taskEl.innerHTML = `
-            <h3>${task.title}</h3>
-            <p>${task.description}</p>
+            <div class="task-header">
+              <div class="task-icon">🔄</div>
+              <div class="task-title">${task.title}</div>
+              <div class="task-reward">+$${CONFIG.bonusAmount.toFixed(3)}</div>
+            </div>
+            
+            <div class="task-description">${task.description}</div>
             
             <div class="progress-container">
               <div>До следующего бонуса: ${nextBonus}/${CONFIG.bonusThreshold} просмотров</div>
@@ -899,33 +986,56 @@
               </div>
             </div>
             
-            <p class="bonus-reward">+$${CONFIG.bonusAmount.toFixed(3)} за каждые ${CONFIG.bonusThreshold} просмотров</p>
-            <p style="color: var(--secondary-text); margin-top: 10px;">
-              Всего просмотров: ${state.totalViews}
-            </p>
+            <div class="task-footer">
+              <div class="task-cooldown">
+                <span>🎯 Всего просмотров: ${state.totalViews}</span>
+              </div>
+            </div>
           `;
           container.appendChild(taskEl);
         } else {
           // Обычные задания
           const isCompleted = state.completedTasks.includes(task.id);
           const taskEl = document.createElement('div');
-          taskEl.className = 'task-item';
+          taskEl.className = 'task-card';
+          
           taskEl.innerHTML = `
-            <h3>${task.title} <span class="task-reward">(+$${task.reward.toFixed(3)})</span></h3>
-            <p style="white-space: pre-line; margin: 10px 0;">${task.description}</p>
-            <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
-              onclick="startTask('${task.id}')" 
-              ${isCompleted ? 'disabled' : ''}>
-              ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
-            </button>`;
+            <div class="task-header">
+              <div class="task-icon">🎯</div>
+              <div class="task-title">${task.title}</div>
+              <div class="task-reward">+$${task.reward.toFixed(3)}</div>
+            </div>
+            
+            <div class="task-description">${task.description}</div>
+            
+            <div class="task-footer">
+              <div class="task-cooldown">
+                <span>⏱️ Таймер: ${task.cooldown} сек</span>
+              </div>
+              
+              <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
+                onclick="startTask('${task.id}')" 
+                ${isCompleted ? 'disabled' : ''}
+                style="width: auto; padding: 10px 20px;">
+                ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
+              </button>
+            </div>
+          `;
+          
           container.appendChild(taskEl);
         }
       });
     }
 
     async function startTask(taskId) {
+      console.log("Starting task:", taskId);
       const task = state.tasks.find(t => t.id === taskId);
-      if (!task) return;
+      
+      if (!task) {
+        console.error("Task not found in state:", taskId, state.tasks);
+        showError("Задание не найдено!");
+        return;
+      }
 
       if (state.completedTasks.includes(taskId)) {
         showNotification("Вы уже выполнили это задание!");
@@ -941,6 +1051,8 @@
     }
 
     async function completeTask(taskId) {
+      console.log("Completing task:", taskId);
+      
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
           method: 'POST',
@@ -953,6 +1065,7 @@
         
         if (!response.ok) {
           const errorData = await response.json();
+          console.error("Task completion error:", errorData);
           throw new Error(errorData.error || "Ошибка выполнения задания");
         }
         
@@ -963,7 +1076,11 @@
         renderTasks();
         showNotification(`Задание выполнено! +$${result.reward.toFixed(3)}`);
       } catch (error) {
-        console.error("Ошибка выполнения задания:", error);
+        console.error("Task completion error:", {
+          taskId,
+          error: error.message,
+          response: error.response ? await error.response.json() : null
+        });
         showError(error.message || "Ошибка выполнения задания");
       }
     }
@@ -977,6 +1094,7 @@
       document.getElementById('admin-password').value = '';
     }
 
+    // Функция проверки пароля - теперь пароль проверяется на сервере
     async function checkAdminPassword() {
       const password = document.getElementById('admin-password').value;
       
