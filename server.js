@@ -2,55 +2,39 @@ import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Конфигурация
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
-  WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
   BONUS_THRESHOLD: 200,    // Каждые 200 просмотров
-  BONUS_AMOUNT: 0.005      // Награда за каждые 200 просмотров
+  BONUS_AMOUNT: 0.005,     // Награда за каждые 200 просмотров
+  SUPABASE_URL: "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
+  SUPABASE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
 };
 
-const supabase = createClient(
-  "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
-);
+const supabase = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 
 const app = new Application();
 const router = new Router();
 
-app.use(async (ctx, next) => {
-  try {
-    await next();
-  } catch (err) {
-    console.error("Server error:", err);
-    ctx.response.status = 500;
-    ctx.response.body = {
-      success: false,
-      error: "Internal server error",
-      details: err.message
-    };
-  }
-});
-
+// Включение CORS
 app.use(oakCors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
+// Обработка JSON тел запросов
 app.use(async (ctx, next) => {
   if (ctx.request.hasBody) {
     try {
       const body = ctx.request.body();
       if (body.type === "json") {
         ctx.state.body = await body.value;
-      } else if (body.type === "form") {
-        const formData = await body.value;
-        ctx.state.body = Object.fromEntries(formData.entries());
       }
     } catch (err) {
       console.error("Body parsing error:", err);
@@ -59,237 +43,216 @@ app.use(async (ctx, next) => {
   await next();
 });
 
+// Генератор ID
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-async function cleanupOldData() {
-  try {
-    await supabase
-      .from("views")
-      .delete()
-      .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+// Эндпоинт для рекламных сетей
+router.get("/reward", async (ctx) => {
+  const params = ctx.request.url.searchParams;
+  const telegramId = params.get("userid");
+  const secret = params.get("secret");
+  const adId = params.get("ad_id") || "unknown";
+  const source = params.get("source") || "telegram";
 
-    const { data: inactiveUsers } = await supabase
-      .from("users")
-      .select("user_id")
-      .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-      .lt("balance", 0.01);
-
-    if (inactiveUsers && inactiveUsers.length > 0) {
-      const userIds = inactiveUsers.map(u => u.user_id);
-      
-      await supabase
-        .from("views")
-        .delete()
-        .in("user_id", userIds);
-      
-      await supabase
-        .from("users")
-        .delete()
-        .in("user_id", userIds);
-    }
-
-    await supabase
-      .from("withdrawals")
-      .delete()
-      .lt("date", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-      .neq("status", "pending");
-
-    console.log("Cleanup completed");
-  } catch (error) {
-    console.error("Cleanup error:", error);
-  }
-}
-
-setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
-cleanupOldData();
-
-// ================== ROUTES ================== //
-
-router.post("/register", async (ctx) => {
-  const { refCode } = ctx.state.body || {};
-  const userId = `user_${generateId()}`;
-  const userRefCode = generateId().toString();
-
-  const { error } = await supabase
-    .from("users")
-    .insert({
-      user_id: userId,
-      balance: 0,
-      total_views: 0,
-      ref_code: userRefCode,
-      ref_count: 0,
-      ref_earnings: 0,
-      created_at: new Date().toISOString()
-    });
-
-  if (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Database error" };
-    return;
-  }
-
-  if (refCode) {
-    const { data: referrer } = await supabase
-      .from("users")
-      .select("*")
-      .eq("ref_code", refCode)
-      .single();
-
-    if (referrer) {
-      const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-      
-      await supabase
-        .from("users")
-        .update({
-          ref_count: referrer.ref_count + 1,
-          ref_earnings: referrer.ref_earnings + bonus,
-          balance: referrer.balance + bonus
-        })
-        .eq("user_id", referrer.user_id);
-    }
-  }
-
-  ctx.response.body = {
-    success: true,
-    userId,
-    refCode: userRefCode,
-    refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
-  };
-});
-
-router.all("/reward", async (ctx) => {
-  let userId, secret;
-  
-  if (ctx.request.method === "POST") {
-    const body = ctx.state.body || {};
-    userId = body.userId || body.userid;
-    secret = body.secret;
-  } else {
-    userId = ctx.request.url.searchParams.get("userid");
-    secret = ctx.request.url.searchParams.get("secret");
-  }
-
-  if (!userId) {
+  // Валидация входящих параметров
+  if (!telegramId || !/^\d+$/.test(telegramId)) {
     ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "User ID is required" };
+    ctx.response.body = { success: false, error: "Invalid Telegram ID" };
     return;
   }
 
-  if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
+  if (secret !== CONFIG.SECRET_KEY) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Invalid secret" };
     return;
   }
 
-  const today = new Date().toISOString().split("T")[0];
-  
-  const [{ data: user, error: userError }, { data: viewsData, error: viewsError }] = await Promise.all([
-    supabase.from("users").select("*").eq("user_id", userId).single(),
-    supabase.from("views").select("count").eq("user_id", userId).eq("date", today).single()
-  ]);
+  try {
+    // Формируем user_id для Telegram пользователя
+    const userId = `tg_${telegramId}`;
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Проверяем существование пользователя
+    let { data: user, error: userError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
 
-  if (userError || !user) {
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
-  }
+    // Создаем нового пользователя если не найден
+    if (userError || !user) {
+      const newUser = {
+        user_id: userId,
+        balance: 0,
+        total_views: 0,
+        ref_code: `ref_${generateId()}`,
+        ref_count: 0,
+        ref_earnings: 0,
+        created_at: new Date().toISOString()
+      };
 
-  const dailyViews = viewsData?.count || 0;
-  if (dailyViews >= CONFIG.DAILY_LIMIT) {
-    ctx.response.status = 429;
-    ctx.response.body = { success: false, error: "Daily limit reached" };
-    return;
-  }
+      const { error: insertError } = await supabase
+        .from("users")
+        .insert([newUser]);
 
-  // Рассчитываем бонус за накопленные просмотры
-  const newTotalViews = (user.total_views || 0) + 1;
-  let bonusReward = 0;
-  
-  if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
-    bonusReward = CONFIG.BONUS_AMOUNT;
-    console.log(`Начисление бонуса за ${CONFIG.BONUS_THRESHOLD} просмотров: $${CONFIG.BONUS_AMOUNT}`);
-  }
+      if (insertError) throw insertError;
+      
+      user = newUser;
+    }
 
-  const totalReward = CONFIG.REWARD_PER_AD + bonusReward;
-  const newBalance = user.balance + totalReward;
-  
-  // Обновляем данные
-  const { error: viewError } = await supabase
-    .from("views")
-    .upsert({
+    // Получаем статистику просмотров
+    let { data: view, error: viewError } = await supabase
+      .from("views")
+      .select("count")
+      .eq("user_id", userId)
+      .eq("date", today)
+      .single();
+
+    const dailyViews = view?.count || 0;
+
+    // Проверка дневного лимита
+    if (dailyViews >= CONFIG.DAILY_LIMIT) {
+      ctx.response.status = 429;
+      ctx.response.body = { success: false, error: "Daily limit reached" };
+      return;
+    }
+
+    // Рассчет награды
+    const totalViews = user.total_views + 1;
+    let bonus = 0;
+
+    if (totalViews % CONFIG.BONUS_THRESHOLD === 0) {
+      bonus = CONFIG.BONUS_AMOUNT;
+    }
+
+    const reward = CONFIG.REWARD_PER_AD + bonus;
+    const newBalance = user.balance + reward;
+
+    // Обновляем данные
+    const updateUser = supabase
+      .from("users")
+      .update({
+        balance: newBalance,
+        total_views: totalViews
+      })
+      .eq("user_id", userId);
+
+    const upsertView = supabase
+      .from("views")
+      .upsert({
+        user_id: userId,
+        date: today,
+        count: dailyViews + 1
+      }, { onConflict: "user_id,date" });
+
+    await Promise.all([updateUser, upsertView]);
+
+    // Успешный ответ
+    ctx.response.body = {
+      success: true,
       user_id: userId,
-      date: today,
-      count: dailyViews + 1
-    }, { onConflict: "user_id,date" });
-
-  const { error: userUpdateError } = await supabase
-    .from("users")
-    .update({ 
+      reward: reward,
+      base_reward: CONFIG.REWARD_PER_AD,
+      bonus_reward: bonus,
       balance: newBalance,
-      total_views: newTotalViews 
-    })
-    .eq("user_id", userId);
+      views_today: dailyViews + 1,
+      total_views: totalViews
+    };
 
-  if (viewError || userUpdateError) {
+  } catch (error) {
+    console.error("Reward processing error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Database update failed" };
-    return;
+    ctx.response.body = {
+      success: false,
+      error: "Internal server error",
+      details: error.message
+    };
   }
-
-  ctx.response.body = {
-    success: true,
-    reward: totalReward,
-    baseReward: CONFIG.REWARD_PER_AD,
-    bonusReward: bonusReward,
-    balance: newBalance,
-    viewsToday: dailyViews + 1,
-    totalViews: newTotalViews
-  };
 });
 
+// Регистрация нового пользователя
+router.post("/register", async (ctx) => {
+  const { refCode } = ctx.state.body || {};
+  const userId = `user_${generateId()}`;
+  
+  try {
+    const { error } = await supabase
+      .from("users")
+      .insert({
+        user_id: userId,
+        balance: 0,
+        total_views: 0,
+        ref_code: `ref_${generateId()}`,
+        ref_count: 0,
+        ref_earnings: 0,
+        created_at: new Date().toISOString()
+      });
+
+    if (error) throw error;
+    
+    ctx.response.body = {
+      success: true,
+      userId,
+      refCode: userId.substr(0, 8).toUpperCase()
+    };
+  } catch (error) {
+    console.error("Registration error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Database error" };
+  }
+});
+
+// Получение данных пользователя
 router.get("/user/:userId", async (ctx) => {
   const userId = ctx.params.userId;
-  const { data: user, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
   
-  if (error || !user) {
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
+  try {
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+    
+    if (error || !user) {
+      ctx.response.status = 404;
+      ctx.response.body = { success: false, error: "User not found" };
+      return;
+    }
+    
+    ctx.response.body = { success: true, ...user };
+  } catch (error) {
+    console.error("User fetch error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Internal server error" };
   }
-  
-  const { data: completedTasks } = await supabase
-    .from("completed_tasks")
-    .select("task_id")
-    .eq("user_id", userId);
-  
-  ctx.response.body = {
-    success: true,
-    ...user,
-    completedTasks: completedTasks?.map(t => t.task_id) || []
-  };
 });
 
+// Статистика просмотров
 router.get("/views/:userId/:date", async (ctx) => {
   const { userId, date } = ctx.params;
-  const { data: view, error } = await supabase
-    .from("views")
-    .select("count")
-    .eq("user_id", userId)
-    .eq("date", date)
-    .single();
+  
+  try {
+    const { data: view, error } = await supabase
+      .from("views")
+      .select("count")
+      .eq("user_id", userId)
+      .eq("date", date)
+      .single();
 
-  ctx.response.body = { 
-    success: true, 
-    views: view?.count || 0 
-  };
+    ctx.response.body = { 
+      success: true, 
+      views: view?.count || 0 
+    };
+  } catch (error) {
+    console.error("Views fetch error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Internal server error" };
+  }
 });
 
+// Заявка на вывод средств
 router.post("/withdraw", async (ctx) => {
   const { userId, wallet, amount } = ctx.state.body || {};
   
@@ -299,372 +262,304 @@ router.post("/withdraw", async (ctx) => {
     return;
   }
 
-  const { data: user, error: userError } = await supabase
-    .from("users")
-    .select("balance")
-    .eq("user_id", userId)
-    .single();
+  try {
+    const { data: user, error: userError } = await supabase
+      .from("users")
+      .select("balance")
+      .eq("user_id", userId)
+      .single();
 
-  if (userError || !user) {
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
-  }
+    if (userError || !user) {
+      ctx.response.status = 404;
+      ctx.response.body = { success: false, error: "User not found" };
+      return;
+    }
 
-  if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Invalid withdrawal amount" };
-    return;
-  }
+    if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
+      ctx.response.status = 400;
+      ctx.response.body = { success: false, error: "Invalid withdrawal amount" };
+      return;
+    }
 
-  const withdrawId = `wd_${generateId()}`;
-  const { error: withdrawError } = await supabase.from("withdrawals").insert({
-    withdrawal_id: withdrawId,
-    user_id: userId,
-    amount,
-    wallet,
-    status: "pending"
-  });
+    const withdrawId = `wd_${generateId()}`;
+    
+    const { error: withdrawError } = await supabase
+      .from("withdrawals")
+      .insert({
+        withdrawal_id: withdrawId,
+        user_id: userId,
+        amount,
+        wallet,
+        status: "pending"
+      });
 
-  if (withdrawError) {
+    if (withdrawError) throw withdrawError;
+
+    // Обновляем баланс
+    await supabase
+      .from("users")
+      .update({ balance: user.balance - amount })
+      .eq("user_id", userId);
+
+    ctx.response.body = { success: true, withdrawId };
+  } catch (error) {
+    console.error("Withdrawal error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Withdrawal creation failed" };
-    return;
+    ctx.response.body = { success: false, error: "Internal server error" };
   }
-
-  await supabase
-    .from("users")
-    .update({ balance: user.balance - amount })
-    .eq("user_id", userId);
-
-  ctx.response.body = { success: true, withdrawId };
 });
 
+// Получение списка заданий
 router.get("/tasks", async (ctx) => {
-  const { data: tasks, error: tasksError } = await supabase
-    .from("tasks")
-    .select("*");
-  
-  const { data: customTasks, error: customTasksError } = await supabase
-    .from("custom_tasks")
-    .select("*");
-
-  if (tasksError || customTasksError) {
+  try {
+    const { data: tasks, error } = await supabase
+      .from("tasks")
+      .select("*");
+    
+    if (error) throw error;
+    
+    ctx.response.body = { success: true, tasks };
+  } catch (error) {
+    console.error("Tasks fetch error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Database error" };
-    return;
+    ctx.response.body = { success: false, error: "Internal server error" };
   }
-
-  // Добавляем системное задание для просмотров
-  const adWatchTask = {
-    task_id: "system_ad_watching",
-    title: "Просмотр рекламы",
-    description: "Смотрите рекламные ролики и получайте вознаграждение",
-    reward: 0,
-    url: "#",
-    cooldown: 0,
-    is_system: true
-  };
-
-  ctx.response.body = {
-    success: true,
-    tasks: [...(tasks || []), ...(customTasks || []), adWatchTask]
-  };
 });
 
+// Завершение задания
 router.post("/user/:userId/complete-task", async (ctx) => {
   const userId = ctx.params.userId;
   const { taskId } = ctx.state.body || {};
   
-  console.log(`Complete task request: user=${userId}, task=${taskId}`);
-  
-  // 1. Verify user exists
-  const { data: user, error: userError } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-  
-  if (userError || !user) {
-    console.error("User not found:", userId);
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
-  }
-  
   if (!taskId) {
-    console.error("Task ID missing");
     ctx.response.status = 400;
     ctx.response.body = { success: false, error: "Task ID is required" };
     return;
   }
-  
-  // 2. Try to record task completion (will fail if already completed)
+
   try {
-    const { error } = await supabase
-      .from("completed_tasks")
-      .insert({
-        user_id: userId,
-        task_id: taskId,
-        completed_at: new Date().toISOString()
-      });
+    // Получаем данные пользователя
+    const { data: user, error: userError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
 
-    if (error) {
-      if (error.code === "23505") { // Unique violation
-        console.log("Task already completed:", taskId);
-        ctx.response.status = 400;
-        ctx.response.body = { success: false, error: "Task already completed" };
-        return;
-      }
-      throw error;
+    if (userError || !user) {
+      ctx.response.status = 404;
+      ctx.response.body = { success: false, error: "User not found" };
+      return;
     }
-  } catch (error) {
-    console.error("Task completion record error:", error);
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false, 
-      error: "Failed to record task completion" 
-    };
-    return;
-  }
-  
-  // 3. Find task in database
-  let task = null;
-  
-  // Check main tasks
-  const { data: taskData } = await supabase
-    .from("tasks")
-    .select("*")
-    .eq("task_id", taskId)
-    .maybeSingle();
 
-  if (taskData) {
-    task = taskData;
-  } 
-  // Check custom tasks
-  else {
-    const { data: customTaskData } = await supabase
-      .from("custom_tasks")
+    // Получаем данные задания
+    const { data: task, error: taskError } = await supabase
+      .from("tasks")
       .select("*")
       .eq("task_id", taskId)
-      .maybeSingle();
-      
-    if (customTaskData) {
-      task = customTaskData;
-    }
-  }
-  
-  if (!task) {
-    console.error("Task not found:", taskId);
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "Task not found" };
-    return;
-  }
-  
-  // 4. Award task reward
-  const newBalance = user.balance + task.reward;
-  const { error: balanceError } = await supabase
-    .from("users")
-    .update({ balance: newBalance })
-    .eq("user_id", userId);
+      .single();
 
-  if (balanceError) {
-    console.error("Balance update error:", balanceError);
+    if (taskError || !task) {
+      ctx.response.status = 404;
+      ctx.response.body = { success: false, error: "Task not found" };
+      return;
+    }
+
+    // Обновляем баланс
+    const newBalance = user.balance + task.reward;
+    await supabase
+      .from("users")
+      .update({ balance: newBalance })
+      .eq("user_id", userId);
+
+    ctx.response.body = {
+      success: true,
+      balance: newBalance,
+      reward: task.reward
+    };
+  } catch (error) {
+    console.error("Task completion error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Balance update failed" };
-    return;
+    ctx.response.body = { success: false, error: "Internal server error" };
   }
-  
-  console.log(`Task completed: user=${userId}, task=${taskId}, reward=$${task.reward}`);
-  
-  ctx.response.body = {
-    success: true,
-    balance: newBalance,
-    reward: task.reward
-  };
 });
 
-// ================== ADMIN ROUTES ================== //
-
+// Админ-авторизация
 router.post("/admin/login", async (ctx) => {
   const { password } = ctx.state.body || {};
+  
   if (password === CONFIG.ADMIN_PASSWORD) {
-    ctx.response.body = { success: true, token: "admin_" + generateId() };
+    ctx.response.body = { 
+      success: true, 
+      token: "admin_" + generateId() 
+    };
   } else {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Wrong password" };
   }
 });
 
+// Получение заявок на вывод (админ)
 router.get("/admin/withdrawals", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
+  
   if (!authHeader?.startsWith("Bearer ")) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Unauthorized" };
     return;
   }
 
-  const { data: withdrawals, error } = await supabase
-    .from("withdrawals")
-    .select("*")
-    .order("date", { ascending: false });
-
-  ctx.response.body = { success: true, withdrawals };
+  try {
+    const { data: withdrawals, error } = await supabase
+      .from("withdrawals")
+      .select("*")
+      .order("date", { ascending: false });
+    
+    if (error) throw error;
+    
+    ctx.response.body = { success: true, withdrawals };
+  } catch (error) {
+    console.error("Withdrawals fetch error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Internal server error" };
+  }
 });
 
+// Обновление статуса вывода (админ)
 router.post("/admin/withdrawals/:id", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
+  const withdrawId = ctx.params.id;
+  const { status } = ctx.state.body || {};
+  
   if (!authHeader?.startsWith("Bearer ")) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Unauthorized" };
     return;
   }
 
-  const { status } = ctx.state.body || {};
-  const withdrawalId = ctx.params.id;
-
-  await supabase
-    .from("withdrawals")
-    .update({
-      status,
-      processed_at: new Date().toISOString()
-    })
-    .eq("withdrawal_id", withdrawalId);
-
-  ctx.response.body = { success: true };
+  try {
+    await supabase
+      .from("withdrawals")
+      .update({ status })
+      .eq("withdrawal_id", withdrawId);
+    
+    ctx.response.body = { success: true };
+  } catch (error) {
+    console.error("Withdrawal update error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Internal server error" };
+  }
 });
 
+// Управление заданиями (админ)
 router.get("/admin/tasks", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
+  
   if (!authHeader?.startsWith("Bearer ")) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Unauthorized" };
     return;
   }
 
-  const { data: tasks, error } = await supabase
-    .from("tasks")
-    .select("*");
-
-  ctx.response.body = { success: true, tasks };
+  try {
+    const { data: tasks, error } = await supabase
+      .from("tasks")
+      .select("*");
+    
+    if (error) throw error;
+    
+    ctx.response.body = { success: true, tasks };
+  } catch (error) {
+    console.error("Tasks fetch error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Internal server error" };
+  }
 });
 
+// Добавление задания (админ)
 router.post("/admin/tasks", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  
   if (!authHeader?.startsWith("Bearer ")) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Unauthorized" };
     return;
   }
 
-  const { title, reward, description, url, cooldown } = ctx.state.body || {};
-  const taskId = `task_${generateId()}`;
-  
-  await supabase
-    .from("tasks")
-    .insert({
-      task_id: taskId,
-      title,
-      reward: parseFloat(reward),
-      description,
-      url,
-      cooldown: parseInt(cooldown) || 10
-    });
-  
-  ctx.response.body = { success: true, taskId };
+  try {
+    const taskId = `task_${generateId()}`;
+    const { error } = await supabase
+      .from("tasks")
+      .insert({
+        task_id: taskId,
+        title,
+        reward,
+        description,
+        url,
+        cooldown
+      });
+    
+    if (error) throw error;
+    
+    ctx.response.body = { success: true, taskId };
+  } catch (error) {
+    console.error("Task creation error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Internal server error" };
+  }
 });
 
+// Удаление задания (админ)
 router.delete("/admin/tasks/:id", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  await supabase
-    .from("tasks")
-    .delete()
-    .eq("task_id", ctx.params.id);
-
-  ctx.response.body = { success: true };
-});
-
-router.get("/admin/custom-tasks", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  const { data: tasks, error } = await supabase
-    .from("custom_tasks")
-    .select("*");
-
-  ctx.response.body = { success: true, tasks };
-});
-
-router.post("/admin/custom-tasks", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Unauthorized" };
-    return;
-  }
-
-  const { title, reward, description, url, cooldown } = ctx.state.body || {};
-  const taskId = `custom_${generateId()}`;
+  const taskId = ctx.params.id;
   
-  await supabase
-    .from("custom_tasks")
-    .insert({
-      task_id: taskId,
-      title,
-      reward: parseFloat(reward),
-      description,
-      url,
-      cooldown: parseInt(cooldown) || 10
-    });
-  
-  ctx.response.body = { success: true, taskId };
-});
-
-router.delete("/admin/custom-tasks/:id", async (ctx) => {
-  const authHeader = ctx.request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Unauthorized" };
     return;
   }
 
-  await supabase
-    .from("custom_tasks")
-    .delete()
-    .eq("task_id", ctx.params.id);
-
-  ctx.response.body = { success: true };
+  try {
+    await supabase
+      .from("tasks")
+      .delete()
+      .eq("task_id", taskId);
+    
+    ctx.response.body = { success: true };
+  } catch (error) {
+    console.error("Task deletion error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Internal server error" };
+  }
 });
 
-// ================== SERVER SETUP ================== //
-
+// Корневой эндпоинт
 router.get("/", (ctx) => {
   ctx.response.body = {
     success: true,
-    status: "OK",
+    message: "AdRewards API Server",
     version: "1.0",
-    message: "Ad Rewards Server with Supabase"
+    endpoints: [
+      "/reward?userid=TELEGRAM_ID&secret=SECRET",
+      "/register",
+      "/user/:userId",
+      "/withdraw",
+      "/tasks"
+    ]
   };
 });
 
 app.use(router.routes());
 app.use(router.allowedMethods());
 
+// Обработка 404
 app.use((ctx) => {
   ctx.response.status = 404;
   ctx.response.body = { success: false, error: "Endpoint not found" };
 });
 
+// Запуск сервера
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 await app.listen({ port });
