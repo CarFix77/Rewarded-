@@ -165,8 +165,8 @@ router.post("/register", async (ctx) => {
   };
 });
 
-// Общая функция обработки награды
-async function processReward(userIdentifier: string, baseReward: number) {
+// Общая функция обработки награды (ИСПРАВЛЕННЫЙ БЛОК)
+async function processReward(userIdentifier, baseReward) {
   const today = new Date().toISOString().split('T')[0];
   
   // Пытаемся найти пользователя по user_id
