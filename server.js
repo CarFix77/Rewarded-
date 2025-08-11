@@ -10,14 +10,13 @@ const CONFIG = {
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
-  BONUS_THRESHOLD: 200,
-  BONUS_AMOUNT: 0.005,
-  TELEGRAM_ID_PREFIX: "telegram_"
+  BONUS_THRESHOLD: 200,    // Каждые 200 просмотров
+  BONUS_AMOUNT: 0.005      // Награда за каждые 200 просмотров
 };
 
 const supabase = createClient(
   "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmciLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc1NDY1MTE3MSwiZXhwIjoyMDcwMjI3MTcxfQ.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
 );
 
 const app = new Application();
@@ -109,13 +108,8 @@ cleanupOldData();
 // ================== ROUTES ================== //
 
 router.post("/register", async (ctx) => {
-  const { refCode, telegramId } = ctx.state.body || {};
-  
-  // Генерируем user_id на основе telegramId если он есть
-  const userId = telegramId 
-    ? `${CONFIG.TELEGRAM_ID_PREFIX}${telegramId}`
-    : `user_${generateId()}`;
-  
+  const { refCode } = ctx.state.body || {};
+  const userId = `user_${generateId()}`;
   const userRefCode = generateId().toString();
 
   const { error } = await supabase
@@ -165,77 +159,6 @@ router.post("/register", async (ctx) => {
   };
 });
 
-// Общая функция обработки награды (ИСПРАВЛЕННЫЙ БЛОК)
-async function processReward(userIdentifier, baseReward) {
-  const today = new Date().toISOString().split('T')[0];
-  
-  // Пытаемся найти пользователя по user_id
-  const { data: user, error: userError } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", userIdentifier)
-    .single();
-
-  if (userError || !user) {
-    throw new Error("User not found");
-  }
-
-  const { data: viewsData, error: viewsError } = await supabase
-    .from("views")
-    .select("count")
-    .eq("user_id", user.user_id)
-    .eq("date", today)
-    .single();
-
-  const dailyViews = viewsData?.count || 0;
-  if (dailyViews >= CONFIG.DAILY_LIMIT) {
-    throw new Error("Daily limit reached");
-  }
-
-  // Рассчитываем бонус за накопленные просмотры
-  const newTotalViews = (user.total_views || 0) + 1;
-  let bonusReward = 0;
-  
-  if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
-    bonusReward = CONFIG.BONUS_AMOUNT;
-    console.log(`Начисление бонуса за ${CONFIG.BONUS_THRESHOLD} просмотров: $${CONFIG.BONUS_AMOUNT}`);
-  }
-
-  const totalReward = baseReward + bonusReward;
-  const newBalance = user.balance + totalReward;
-  
-  // Обновляем данные
-  const { error: viewError } = await supabase
-    .from("views")
-    .upsert({
-      user_id: user.user_id,
-      date: today,
-      count: dailyViews + 1
-    }, { onConflict: "user_id,date" });
-
-  const { error: userUpdateError } = await supabase
-    .from("users")
-    .update({ 
-      balance: newBalance,
-      total_views: newTotalViews 
-    })
-    .eq("user_id", user.user_id);
-
-  if (viewError || userUpdateError) {
-    throw new Error("Database update failed");
-  }
-
-  return {
-    success: true,
-    reward: totalReward,
-    baseReward,
-    bonusReward,
-    balance: newBalance,
-    viewsToday: dailyViews + 1,
-    totalViews: newTotalViews
-  };
-}
-
 router.all("/reward", async (ctx) => {
   let userId, secret;
   
@@ -260,63 +183,70 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  try {
-    const result = await processReward(userId, CONFIG.REWARD_PER_AD);
-    ctx.response.body = result;
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false, 
-      error: error.message || "Reward processing failed"
-    };
-  }
-});
-
-router.post("/reward-webhook", async (ctx) => {
-  const body = ctx.state.body || {};
-  const { userId, adId, reward, secret } = body;
+  const today = new Date().toISOString().split("T")[0];
   
-  if (!userId || !secret) {
-    ctx.response.status = 400;
-    ctx.response.body = { 
-      success: false, 
-      error: "Missing required parameters: userId and secret" 
-    };
+  const [{ data: user, error: userError }, { data: viewsData, error: viewsError }] = await Promise.all([
+    supabase.from("users").select("*").eq("user_id", userId).single(),
+    supabase.from("views").select("count").eq("user_id", userId).eq("date", today).single()
+  ]);
+
+  if (userError || !user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
     return;
   }
 
-  if (secret !== CONFIG.WEBHOOK_SECRET) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Invalid webhook secret" };
+  const dailyViews = viewsData?.count || 0;
+  if (dailyViews >= CONFIG.DAILY_LIMIT) {
+    ctx.response.status = 429;
+    ctx.response.body = { success: false, error: "Daily limit reached" };
     return;
   }
 
-  // Форматируем Telegram ID
-  const formattedUserId = `${CONFIG.TELEGRAM_ID_PREFIX}${userId}`;
+  // Рассчитываем бонус за накопленные просмотры
+  const newTotalViews = (user.total_views || 0) + 1;
+  let bonusReward = 0;
+  
+  if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
+    bonusReward = CONFIG.BONUS_AMOUNT;
+    console.log(`Начисление бонуса за ${CONFIG.BONUS_THRESHOLD} просмотров: $${CONFIG.BONUS_AMOUNT}`);
+  }
 
-  // Используем переданную награду или стандартную из конфига
-  const baseReward = typeof reward === 'number' && reward > 0 
-    ? reward 
-    : CONFIG.REWARD_PER_AD;
+  const totalReward = CONFIG.REWARD_PER_AD + bonusReward;
+  const newBalance = user.balance + totalReward;
+  
+  // Обновляем данные
+  const { error: viewError } = await supabase
+    .from("views")
+    .upsert({
+      user_id: userId,
+      date: today,
+      count: dailyViews + 1
+    }, { onConflict: "user_id,date" });
 
-  try {
-    const result = await processReward(formattedUserId, baseReward);
-    console.log(`Reward processed for user ${formattedUserId}: $${result.reward.toFixed(6)}`);
-    
-    ctx.response.body = {
-      success: true,
-      message: "Reward processed successfully",
-      adId,
-      ...result
-    };
-  } catch (error) {
-    console.error("Webhook processing error:", error);
+  const { error: userUpdateError } = await supabase
+    .from("users")
+    .update({ 
+      balance: newBalance,
+      total_views: newTotalViews 
+    })
+    .eq("user_id", userId);
+
+  if (viewError || userUpdateError) {
     ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false, 
-      error: error.message || "Internal server error"
-    };
+    ctx.response.body = { success: false, error: "Database update failed" };
+    return;
   }
+
+  ctx.response.body = {
+    success: true,
+    reward: totalReward,
+    baseReward: CONFIG.REWARD_PER_AD,
+    bonusReward: bonusReward,
+    balance: newBalance,
+    viewsToday: dailyViews + 1,
+    totalViews: newTotalViews
+  };
 });
 
 router.get("/user/:userId", async (ctx) => {
