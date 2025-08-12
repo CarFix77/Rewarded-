@@ -63,6 +63,20 @@ function generateId() {
   return Math.floor(10000000 + Math.random() * 90000000);
 }
 
+async function getTotalViews(userId) {
+  const { data, error } = await supabase
+    .from("views")
+    .select("count")
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("Error getting total views:", error);
+    return 0;
+  }
+
+  return data.reduce((sum, row) => sum + row.count, 0);
+}
+
 async function cleanupOldData() {
   try {
     await supabase
@@ -117,11 +131,10 @@ router.post("/register", async (ctx) => {
     .insert({
       user_id: userId,
       balance: 0,
-      total_views: 0,
       ref_code: userRefCode,
       ref_count: 0,
       ref_earnings: 0,
-      created_at: new Date().toISOString()  // Исправленный формат
+      created_at: new Date().toISOString()
     });
 
   if (error) {
@@ -209,7 +222,8 @@ router.all("/reward", async (ctx) => {
   }
 
   // Рассчитываем бонус за накопленные просмотры
-  const newTotalViews = (user.total_views || 0) + 1;
+  const totalViews = await getTotalViews(userId);
+  const newTotalViews = totalViews + 1;
   let bonusReward = 0;
   
   if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
@@ -232,8 +246,7 @@ router.all("/reward", async (ctx) => {
   const { error: userUpdateError } = await supabase
     .from("users")
     .update({ 
-      balance: newBalance,
-      total_views: newTotalViews 
+      balance: newBalance
     })
     .eq("user_id", userId);
 
@@ -268,6 +281,7 @@ router.get("/user/:userId", async (ctx) => {
     return;
   }
   
+  const totalViews = await getTotalViews(userId);
   const { data: completedTasks } = await supabase
     .from("completed_tasks")
     .select("task_id")
@@ -276,6 +290,7 @@ router.get("/user/:userId", async (ctx) => {
   ctx.response.body = {
     success: true,
     ...user,
+    total_views: totalViews,
     completedTasks: completedTasks?.map(t => t.task_id) || []
   };
 });
@@ -329,7 +344,7 @@ router.post("/withdraw", async (ctx) => {
     amount,
     wallet,
     status: "pending",
-    date: new Date().toISOString()  // Исправленный формат
+    date: new Date().toISOString()
   });
 
   if (withdrawError) {
@@ -412,7 +427,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       .insert({
         user_id: userId,
         task_id: taskId,
-        completed_at: new Date().toISOString()  // Исправленный формат
+        completed_at: new Date().toISOString()
       });
 
     if (error) {
@@ -533,7 +548,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
     .from("withdrawals")
     .update({
       status,
-      processed_at: new Date().toISOString()  // Исправленный формат
+      processed_at: new Date().toISOString()
     })
     .eq("withdrawal_id", withdrawalId);
 
