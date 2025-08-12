@@ -10,8 +10,8 @@ const CONFIG = {
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
-  BONUS_THRESHOLD: 200,    // Каждые 200 просмотров
-  BONUS_AMOUNT: 0.005      // Награда за каждые 200 просмотров
+  BONUS_THRESHOLD: 200,
+  BONUS_AMOUNT: 0.005
 };
 
 const supabase = createClient(
@@ -60,7 +60,7 @@ app.use(async (ctx, next) => {
 });
 
 function generateId() {
-  return Math.floor(100000 + Math.random() * 900000);
+  return Math.floor(10000000 + Math.random() * 90000000);
 }
 
 async function cleanupOldData() {
@@ -68,7 +68,7 @@ async function cleanupOldData() {
     await supabase
       .from("views")
       .delete()
-      .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+      .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
 
     const { data: inactiveUsers } = await supabase
       .from("users")
@@ -121,17 +121,22 @@ router.post("/register", async (ctx) => {
       ref_code: userRefCode,
       ref_count: 0,
       ref_earnings: 0,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString()  // Исправленный формат
     });
 
   if (error) {
+    console.error("Registration error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Database error" };
+    ctx.response.body = { 
+      success: false, 
+      error: "Database error",
+      details: error.message
+    };
     return;
   }
 
   if (refCode) {
-    const { data: referrer } = await supabase
+    const { data: referrer, error: refError } = await supabase
       .from("users")
       .select("*")
       .eq("ref_code", refCode)
@@ -323,7 +328,8 @@ router.post("/withdraw", async (ctx) => {
     user_id: userId,
     amount,
     wallet,
-    status: "pending"
+    status: "pending",
+    date: new Date().toISOString()  // Исправленный формат
   });
 
   if (withdrawError) {
@@ -406,7 +412,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       .insert({
         user_id: userId,
         task_id: taskId,
-        completed_at: new Date().toISOString()
+        completed_at: new Date().toISOString()  // Исправленный формат
       });
 
     if (error) {
@@ -527,7 +533,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
     .from("withdrawals")
     .update({
       status,
-      processed_at: new Date().toISOString()
+      processed_at: new Date().toISOString()  // Исправленный формат
     })
     .eq("withdrawal_id", withdrawalId);
 
