@@ -696,7 +696,7 @@
     };
 
     const state = {
-      userId: null,
+      userId: null, // Telegram ID пользователя
       balance: 0,
       adViews: 0,
       totalViews: 0,
@@ -726,31 +726,27 @@
       };
     }
 
-    async function initUser() {
-      // Проверка запуска в Telegram WebApp
-      if (!window.Telegram?.WebApp?.initDataUnsafe?.user) {
-        document.getElementById('app-container').innerHTML = `
-          <div class="card" style="text-align: center; padding: 40px 20px;">
-            <h2>Откройте в Telegram</h2>
-            <p>Это приложение работает только внутри Telegram-бота</p>
-            <a href="https://t.me/Ad_Rew_ards_bot" class="btn" style="margin-top: 20px; text-decoration: none;">
-              <span>🤖</span> Открыть бота
-            </a>
-          </div>
-        `;
-        return;
-      }
+    function generateReferralCode() {
+      return Math.random().toString(36).substring(2, 10).toUpperCase();
+    }
 
+    async function initUser() {
       try {
-        const user = window.Telegram.WebApp.initDataUnsafe.user;
+        // Получаем Telegram ID из объекта Telegram WebApp
+        const user = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        if (!user || !user.id) {
+          throw new Error("Telegram user data not available");
+        }
         const telegramId = user.id.toString();
-        const refCode = new URLSearchParams(window.location.search).get('start');
         
-        // Проверяем существующего пользователя
+        // Проверяем, зарегистрирован ли пользователь
         const response = await fetch(`${CONFIG.apiUrl}/user/${telegramId}`);
         
         if (response.status === 404) {
-          // Регистрация нового пользователя
+          // Пользователь не найден - регистрируем
+          const refCode = new URLSearchParams(window.location.search).get('ref') || 
+                          new URLSearchParams(window.location.search).get('start');
+          
           const registerResponse = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
             headers: { 
@@ -770,21 +766,21 @@
           
           const registerData = await registerResponse.json();
           state.userId = telegramId;
-          state.referralCode = registerData.refCode;
+          state.referralCode = registerData.refCode || generateReferralCode();
         } else if (response.ok) {
-          // Загрузка данных существующего пользователя
+          // Пользователь найден
           const userData = await response.json();
           state.userId = telegramId;
           state.balance = userData.balance || 0;
           state.referrals = userData.ref_count || 0;
           state.referralEarnings = userData.ref_earnings || 0;
-          state.referralCode = userData.ref_code;
+          state.referralCode = userData.ref_code || generateReferralCode();
           state.completedTasks = userData.completedTasks || [];
         } else {
           throw new Error("Failed to load user data");
         }
         
-        // Загрузка статистики просмотров
+        // Загружаем статистику просмотров
         const today = new Date().toISOString().split('T')[0];
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
         const statsData = statsResponse.ok ? await statsResponse.json() : { views: 0 };
@@ -792,7 +788,7 @@
         state.adViews = statsData.views || 0;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
         
-        // Загрузка общего количества просмотров
+        // Загружаем общее количество просмотров
         const totalResponse = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
         if (totalResponse.ok) {
           const userData = await totalResponse.json();
@@ -836,6 +832,7 @@
         
         updateUI();
         
+        // Показываем уведомление
         let notification = `+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`;
         if (result.bonusReward > 0) {
           notification += ` +$${result.bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!`;
@@ -955,6 +952,7 @@
       
       state.tasks.forEach(task => {
         if (task.is_system) {
+          // Системное задание для просмотров рекламы
           const progress = state.totalViews % CONFIG.bonusThreshold;
           const progressPercent = (progress / CONFIG.bonusThreshold) * 100;
           const nextBonus = CONFIG.bonusThreshold - progress;
@@ -985,6 +983,7 @@
           `;
           container.appendChild(taskEl);
         } else {
+          // Обычные задания
           const isCompleted = state.completedTasks.includes(task.id);
           const taskEl = document.createElement('div');
           taskEl.className = 'task-card';
@@ -1121,10 +1120,12 @@
       document.getElementById('total-views').textContent = state.totalViews;
       document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
       
+      // Прогресс бонусных просмотров
       const bonusProgress = state.totalViews % CONFIG.bonusThreshold;
       const bonusProgressPercent = (bonusProgress / CONFIG.bonusThreshold) * 100;
       document.getElementById('bonus-progress').style.width = `${bonusProgressPercent}%`;
       
+      // Показываем индикатор, если до бонуса осталось мало просмотров
       const bonusIndicator = document.getElementById('bonus-indicator');
       const viewsToBonus = CONFIG.bonusThreshold - bonusProgress;
       if (viewsToBonus <= 20 && viewsToBonus > 0) {
