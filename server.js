@@ -26,7 +26,7 @@ const app = new Application();
 const router = new Router();
 
 // Валидация данных Telegram
-function verifyTelegramData(initData: string): boolean {
+function verifyTelegramData(initData) {
   return validateWebAppData(CONFIG.BOT_TOKEN, initData);
 }
 
@@ -71,7 +71,7 @@ function generateId() {
   return Math.floor(10000000 + Math.random() * 90000000);
 }
 
-async function getTotalViews(userId: string) {
+async function getTotalViews(userId) {
   const { data, error } = await supabase
     .from("views")
     .select("count")
@@ -210,7 +210,9 @@ router.post("/verify-telegram", async (ctx) => {
 });
 
 router.post("/register", async (ctx) => {
-  const { refCode, telegramId } = ctx.state.body || {};
+  const body = ctx.state.body || {};
+  const refCode = body.refCode;
+  const telegramId = body.telegramId;
   
   if (!telegramId) {
     ctx.response.status = 400;
@@ -450,7 +452,10 @@ router.get("/views/:userId/:date", async (ctx) => {
 });
 
 router.post("/withdraw", async (ctx) => {
-  const { userId, wallet, amount } = ctx.state.body || {};
+  const body = ctx.state.body || {};
+  const userId = body.userId;
+  const wallet = body.wallet;
+  const amount = parseFloat(body.amount);
   
   if (!userId || !wallet || !amount) {
     ctx.response.status = 400;
@@ -534,7 +539,8 @@ router.get("/tasks", async (ctx) => {
 
 router.post("/user/:userId/complete-task", async (ctx) => {
   const userId = ctx.params.userId;
-  const { taskId } = ctx.state.body || {};
+  const body = ctx.state.body || {};
+  const taskId = body.taskId;
   
   console.log(`Complete task request: user=${userId}, task=${taskId}`);
   
@@ -647,7 +653,9 @@ router.post("/user/:userId/complete-task", async (ctx) => {
 // ================== ADMIN ROUTES ================== //
 
 router.post("/admin/login", async (ctx) => {
-  const { password } = ctx.state.body || {};
+  const body = ctx.state.body || {};
+  const password = body.password;
+  
   if (password === CONFIG.ADMIN_PASSWORD) {
     ctx.response.body = { success: true, token: "admin_" + generateId() };
   } else {
@@ -680,7 +688,8 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
     return;
   }
 
-  const { status } = ctx.state.body || {};
+  const body = ctx.state.body || {};
+  const status = body.status;
   const withdrawalId = ctx.params.id;
 
   await supabase
@@ -717,7 +726,13 @@ router.post("/admin/tasks", async (ctx) => {
     return;
   }
 
-  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const body = ctx.state.body || {};
+  const title = body.title;
+  const reward = parseFloat(body.reward);
+  const description = body.description;
+  const url = body.url;
+  const cooldown = parseInt(body.cooldown) || 10;
+  
   const taskId = `task_${generateId()}`;
   
   await supabase
@@ -725,10 +740,10 @@ router.post("/admin/tasks", async (ctx) => {
     .insert({
       task_id: taskId,
       title,
-      reward: parseFloat(reward),
+      reward,
       description,
       url,
-      cooldown: parseInt(cooldown) || 10
+      cooldown
     });
   
   ctx.response.body = { success: true, taskId };
@@ -773,7 +788,13 @@ router.post("/admin/custom-tasks", async (ctx) => {
     return;
   }
 
-  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const body = ctx.state.body || {};
+  const title = body.title;
+  const reward = parseFloat(body.reward);
+  const description = body.description;
+  const url = body.url;
+  const cooldown = parseInt(body.cooldown) || 10;
+  
   const taskId = `custom_${generateId()}`;
   
   await supabase
@@ -781,10 +802,10 @@ router.post("/admin/custom-tasks", async (ctx) => {
     .insert({
       task_id: taskId,
       title,
-      reward: parseFloat(reward),
+      reward,
       description,
       url,
-      cooldown: parseInt(cooldown) || 10
+      cooldown
     });
   
   ctx.response.body = { success: true, taskId };
@@ -827,4 +848,4 @@ app.use((ctx) => {
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-await app.listen({ port });
+await app.listen({ port }); 
