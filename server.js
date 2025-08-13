@@ -2,6 +2,7 @@ import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Конфигурация приложения
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
@@ -12,17 +13,19 @@ const CONFIG = {
   ADMIN_PASSWORD: "8223Nn8223",
   BONUS_THRESHOLD: 200,
   BONUS_AMOUNT: 0.005,
-  TELEGRAM_ID_PREFIX: "telegram_"
+  REWARD_URL: "https://test.adsgram.ai/reward?userid=[userId]"
 };
 
+// Подключение к Supabase
 const supabase = createClient(
   "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmciLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc1NDY1MTE3MSwiZXhwIjoyMDcwMjI3MTcxfQ.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
 );
 
 const app = new Application();
 const router = new Router();
 
+// Middleware для обработки ошибок
 app.use(async (ctx, next) => {
   try {
     await next();
@@ -37,12 +40,14 @@ app.use(async (ctx, next) => {
   }
 });
 
+// Настройка CORS
 app.use(oakCors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
+// Middleware для парсинга тела запроса
 app.use(async (ctx, next) => {
   if (ctx.request.hasBody) {
     try {
@@ -60,17 +65,35 @@ app.use(async (ctx, next) => {
   await next();
 });
 
+// Вспомогательные функции
 function generateId() {
-  return Math.floor(100000 + Math.random() * 900000);
+  return Math.floor(10000000 + Math.random() * 90000000);
 }
 
+async function getTotalViews(userId) {
+  const { data, error } = await supabase
+    .from("views")
+    .select("count")
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("Error getting total views:", error);
+    return 0;
+  }
+
+  return data.reduce((sum, row) => sum + row.count, 0);
+}
+
+// Очистка старых данных
 async function cleanupOldData() {
   try {
+    // Удаляем данные о просмотрах старше 7 дней
     await supabase
       .from("views")
       .delete()
-      .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+      .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
 
+    // Находим неактивных пользователей (30 дней без активности и баланс < $0.01)
     const { data: inactiveUsers } = await supabase
       .from("users")
       .select("user_id")
@@ -80,17 +103,20 @@ async function cleanupOldData() {
     if (inactiveUsers && inactiveUsers.length > 0) {
       const userIds = inactiveUsers.map(u => u.user_id);
       
+      // Удаляем данные о просмотрах для неактивных пользователей
       await supabase
         .from("views")
         .delete()
         .in("user_id", userIds);
       
+      // Удаляем самих неактивных пользователей
       await supabase
         .from("users")
         .delete()
         .in("user_id", userIds);
     }
 
+    // Удаляем старые завершенные/отклоненные заявки на вывод
     await supabase
       .from("withdrawals")
       .delete()
@@ -103,27 +129,48 @@ async function cleanupOldData() {
   }
 }
 
+// Запускаем очистку каждые 24 часа
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
-cleanupOldData();
+cleanupOldData(); // Запускаем сразу при старте
 
-// ================== ROUTES ================== //
+// ================== ОСНОВНЫЕ РОУТЫ ================== //
 
+// Регистрация пользователя
 router.post("/register", async (ctx) => {
   const { refCode, telegramId } = ctx.state.body || {};
   
-  // Генерируем user_id на основе telegramId если он есть
-  const userId = telegramId 
-    ? `${CONFIG.TELEGRAM_ID_PREFIX}${telegramId}`
-    : `user_${generateId()}`;
-  
+  if (!telegramId) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Telegram ID is required" };
+    return;
+  }
+
+  // Проверяем существующего пользователя
+  const { data: existingUser } = await supabase
+    .from("users")
+    .select("*")
+    .eq("user_id", telegramId)
+    .single();
+
+  if (existingUser) {
+    ctx.response.body = {
+      success: true,
+      userId: telegramId,
+      refCode: existingUser.ref_code,
+      message: "User already exists"
+    };
+    return;
+  }
+
+  // Генерируем реферальный код
   const userRefCode = generateId().toString();
 
+  // Создаем нового пользователя
   const { error } = await supabase
     .from("users")
     .insert({
-      user_id: userId,
+      user_id: telegramId,
       balance: 0,
-      total_views: 0,
       ref_code: userRefCode,
       ref_count: 0,
       ref_earnings: 0,
@@ -131,11 +178,17 @@ router.post("/register", async (ctx) => {
     });
 
   if (error) {
+    console.error("Registration error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Database error" };
+    ctx.response.body = { 
+      success: false, 
+      error: "Database error",
+      details: error.message
+    };
     return;
   }
 
+  // Если есть реферальный код, начисляем бонус пригласившему
   if (refCode) {
     const { data: referrer } = await supabase
       .from("users")
@@ -159,86 +212,17 @@ router.post("/register", async (ctx) => {
 
   ctx.response.body = {
     success: true,
-    userId,
+    userId: telegramId,
     refCode: userRefCode,
     refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
   };
 });
 
-// Общая функция обработки награды (ИСПРАВЛЕННЫЙ БЛОК)
-async function processReward(userIdentifier, baseReward) {
-  const today = new Date().toISOString().split('T')[0];
-  
-  // Пытаемся найти пользователя по user_id
-  const { data: user, error: userError } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", userIdentifier)
-    .single();
-
-  if (userError || !user) {
-    throw new Error("User not found");
-  }
-
-  const { data: viewsData, error: viewsError } = await supabase
-    .from("views")
-    .select("count")
-    .eq("user_id", user.user_id)
-    .eq("date", today)
-    .single();
-
-  const dailyViews = viewsData?.count || 0;
-  if (dailyViews >= CONFIG.DAILY_LIMIT) {
-    throw new Error("Daily limit reached");
-  }
-
-  // Рассчитываем бонус за накопленные просмотры
-  const newTotalViews = (user.total_views || 0) + 1;
-  let bonusReward = 0;
-  
-  if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
-    bonusReward = CONFIG.BONUS_AMOUNT;
-    console.log(`Начисление бонуса за ${CONFIG.BONUS_THRESHOLD} просмотров: $${CONFIG.BONUS_AMOUNT}`);
-  }
-
-  const totalReward = baseReward + bonusReward;
-  const newBalance = user.balance + totalReward;
-  
-  // Обновляем данные
-  const { error: viewError } = await supabase
-    .from("views")
-    .upsert({
-      user_id: user.user_id,
-      date: today,
-      count: dailyViews + 1
-    }, { onConflict: "user_id,date" });
-
-  const { error: userUpdateError } = await supabase
-    .from("users")
-    .update({ 
-      balance: newBalance,
-      total_views: newTotalViews 
-    })
-    .eq("user_id", user.user_id);
-
-  if (viewError || userUpdateError) {
-    throw new Error("Database update failed");
-  }
-
-  return {
-    success: true,
-    reward: totalReward,
-    baseReward,
-    bonusReward,
-    balance: newBalance,
-    viewsToday: dailyViews + 1,
-    totalViews: newTotalViews
-  };
-}
-
+// Обработка просмотра рекламы
 router.all("/reward", async (ctx) => {
   let userId, secret;
   
+  // Получаем параметры из запроса
   if (ctx.request.method === "POST") {
     const body = ctx.state.body || {};
     userId = body.userId || body.userid;
@@ -254,85 +238,109 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
+  // Проверка секретного ключа
   if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Invalid secret" };
     return;
   }
 
-  try {
-    const result = await processReward(userId, CONFIG.REWARD_PER_AD);
-    ctx.response.body = result;
-  } catch (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false, 
-      error: error.message || "Reward processing failed"
-    };
-  }
-});
-
-router.post("/reward-webhook", async (ctx) => {
-  const body = ctx.state.body || {};
-  const { userId, adId, reward, secret } = body;
+  const today = new Date().toISOString().split("T")[0];
   
-  if (!userId || !secret) {
-    ctx.response.status = 400;
-    ctx.response.body = { 
-      success: false, 
-      error: "Missing required parameters: userId and secret" 
-    };
+  // Получаем данные пользователя и статистику просмотров
+  const [{ data: user }, { data: viewsData }] = await Promise.all([
+    supabase.from("users").select("*").eq("user_id", userId).single(),
+    supabase.from("views").select("count").eq("user_id", userId).eq("date", today).single()
+  ]);
+
+  if (!user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
     return;
   }
 
-  if (secret !== CONFIG.WEBHOOK_SECRET) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Invalid webhook secret" };
+  const dailyViews = viewsData?.count || 0;
+  if (dailyViews >= CONFIG.DAILY_LIMIT) {
+    ctx.response.status = 429;
+    ctx.response.body = { success: false, error: "Daily limit reached" };
     return;
   }
 
-  // Форматируем Telegram ID
-  const formattedUserId = `${CONFIG.TELEGRAM_ID_PREFIX}${userId}`;
+  // Рассчитываем бонус за накопленные просмотры
+  const totalViews = await getTotalViews(userId);
+  const newTotalViews = totalViews + 1;
+  let bonusReward = 0;
+  
+  if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
+    bonusReward = CONFIG.BONUS_AMOUNT;
+    console.log(`Начисление бонуса за ${CONFIG.BONUS_THRESHOLD} просмотров: $${CONFIG.BONUS_AMOUNT}`);
+  }
 
-  // Используем переданную награду или стандартную из конфига
-  const baseReward = typeof reward === 'number' && reward > 0 
-    ? reward 
-    : CONFIG.REWARD_PER_AD;
+  // Общая награда
+  const totalReward = CONFIG.REWARD_PER_AD + bonusReward;
+  const newBalance = user.balance + totalReward;
+  
+  // Обновляем данные
+  const { error: viewError } = await supabase
+    .from("views")
+    .upsert({
+      user_id: userId,
+      date: today,
+      count: dailyViews + 1
+    }, { onConflict: "user_id,date" });
 
-  try {
-    const result = await processReward(formattedUserId, baseReward);
-    console.log(`Reward processed for user ${formattedUserId}: $${result.reward.toFixed(6)}`);
-    
-    ctx.response.body = {
-      success: true,
-      message: "Reward processed successfully",
-      adId,
-      ...result
-    };
-  } catch (error) {
-    console.error("Webhook processing error:", error);
+  const { error: userUpdateError } = await supabase
+    .from("users")
+    .update({ 
+      balance: newBalance
+    })
+    .eq("user_id", userId);
+
+  if (viewError || userUpdateError) {
     ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false, 
-      error: error.message || "Internal server error"
-    };
+    ctx.response.body = { success: false, error: "Database update failed" };
+    return;
   }
+
+  // Отправка события о награде (если настроено)
+  try {
+    if (CONFIG.REWARD_URL) {
+      const rewardUrl = CONFIG.REWARD_URL.replace("[userId]", userId);
+      console.log(`Sending reward event to: ${rewardUrl}`);
+      await fetch(rewardUrl);
+    }
+  } catch (error) {
+    console.error("Error sending reward event:", error);
+  }
+
+  // Возвращаем результат
+  ctx.response.body = {
+    success: true,
+    reward: totalReward,
+    baseReward: CONFIG.REWARD_PER_AD,
+    bonusReward: bonusReward,
+    balance: newBalance,
+    viewsToday: dailyViews + 1,
+    totalViews: newTotalViews
+  };
 });
 
+// Получение данных пользователя
 router.get("/user/:userId", async (ctx) => {
   const userId = ctx.params.userId;
-  const { data: user, error } = await supabase
+  const { data: user } = await supabase
     .from("users")
     .select("*")
     .eq("user_id", userId)
     .single();
   
-  if (error || !user) {
+  if (!user) {
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "User not found" };
     return;
   }
   
+  const totalViews = await getTotalViews(userId);
   const { data: completedTasks } = await supabase
     .from("completed_tasks")
     .select("task_id")
@@ -341,13 +349,15 @@ router.get("/user/:userId", async (ctx) => {
   ctx.response.body = {
     success: true,
     ...user,
+    total_views: totalViews,
     completedTasks: completedTasks?.map(t => t.task_id) || []
   };
 });
 
+// Статистика просмотров за день
 router.get("/views/:userId/:date", async (ctx) => {
   const { userId, date } = ctx.params;
-  const { data: view, error } = await supabase
+  const { data: view } = await supabase
     .from("views")
     .select("count")
     .eq("user_id", userId)
@@ -360,6 +370,7 @@ router.get("/views/:userId/:date", async (ctx) => {
   };
 });
 
+// Запрос на вывод средств
 router.post("/withdraw", async (ctx) => {
   const { userId, wallet, amount } = ctx.state.body || {};
   
@@ -369,13 +380,13 @@ router.post("/withdraw", async (ctx) => {
     return;
   }
 
-  const { data: user, error: userError } = await supabase
+  const { data: user } = await supabase
     .from("users")
     .select("balance")
     .eq("user_id", userId)
     .single();
 
-  if (userError || !user) {
+  if (!user) {
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "User not found" };
     return;
@@ -387,13 +398,15 @@ router.post("/withdraw", async (ctx) => {
     return;
   }
 
+  // Создаем запрос на вывод
   const withdrawId = `wd_${generateId()}`;
   const { error: withdrawError } = await supabase.from("withdrawals").insert({
     withdrawal_id: withdrawId,
     user_id: userId,
     amount,
     wallet,
-    status: "pending"
+    status: "pending",
+    date: new Date().toISOString()
   });
 
   if (withdrawError) {
@@ -402,6 +415,7 @@ router.post("/withdraw", async (ctx) => {
     return;
   }
 
+  // Списываем средства с баланса
   await supabase
     .from("users")
     .update({ balance: user.balance - amount })
@@ -410,20 +424,12 @@ router.post("/withdraw", async (ctx) => {
   ctx.response.body = { success: true, withdrawId };
 });
 
+// Получение списка заданий
 router.get("/tasks", async (ctx) => {
-  const { data: tasks, error: tasksError } = await supabase
-    .from("tasks")
-    .select("*");
-  
-  const { data: customTasks, error: customTasksError } = await supabase
-    .from("custom_tasks")
-    .select("*");
-
-  if (tasksError || customTasksError) {
-    ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Database error" };
-    return;
-  }
+  const [{ data: tasks }, { data: customTasks }] = await Promise.all([
+    supabase.from("tasks").select("*"),
+    supabase.from("custom_tasks").select("*")
+  ]);
 
   // Добавляем системное задание для просмотров
   const adWatchTask = {
@@ -442,34 +448,31 @@ router.get("/tasks", async (ctx) => {
   };
 });
 
+// Завершение задания пользователем
 router.post("/user/:userId/complete-task", async (ctx) => {
   const userId = ctx.params.userId;
   const { taskId } = ctx.state.body || {};
   
-  console.log(`Complete task request: user=${userId}, task=${taskId}`);
-  
-  // 1. Verify user exists
-  const { data: user, error: userError } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-  
-  if (userError || !user) {
-    console.error("User not found:", userId);
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
-  }
-  
   if (!taskId) {
-    console.error("Task ID missing");
     ctx.response.status = 400;
     ctx.response.body = { success: false, error: "Task ID is required" };
     return;
   }
   
-  // 2. Try to record task completion (will fail if already completed)
+  // Проверяем существование пользователя
+  const { data: user } = await supabase
+    .from("users")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+  
+  if (!user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+  
+  // Проверяем, не выполнено ли задание ранее
   try {
     const { error } = await supabase
       .from("completed_tasks")
@@ -480,16 +483,11 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       });
 
     if (error) {
-      if (error.code === "23505") { // Unique violation
-        console.log("Task already completed:", taskId);
-        ctx.response.status = 400;
-        ctx.response.body = { success: false, error: "Task already completed" };
-        return;
-      }
-      throw error;
+      ctx.response.status = 400;
+      ctx.response.body = { success: false, error: "Task already completed" };
+      return;
     }
   } catch (error) {
-    console.error("Task completion record error:", error);
     ctx.response.status = 500;
     ctx.response.body = { 
       success: false, 
@@ -498,10 +496,8 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     return;
   }
   
-  // 3. Find task in database
+  // Находим задание
   let task = null;
-  
-  // Check main tasks
   const { data: taskData } = await supabase
     .from("tasks")
     .select("*")
@@ -510,9 +506,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
 
   if (taskData) {
     task = taskData;
-  } 
-  // Check custom tasks
-  else {
+  } else {
     const { data: customTaskData } = await supabase
       .from("custom_tasks")
       .select("*")
@@ -525,13 +519,12 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   }
   
   if (!task) {
-    console.error("Task not found:", taskId);
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "Task not found" };
     return;
   }
   
-  // 4. Award task reward
+  // Начисляем награду
   const newBalance = user.balance + task.reward;
   const { error: balanceError } = await supabase
     .from("users")
@@ -539,13 +532,10 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     .eq("user_id", userId);
 
   if (balanceError) {
-    console.error("Balance update error:", balanceError);
     ctx.response.status = 500;
     ctx.response.body = { success: false, error: "Balance update failed" };
     return;
   }
-  
-  console.log(`Task completed: user=${userId}, task=${taskId}, reward=$${task.reward}`);
   
   ctx.response.body = {
     success: true,
@@ -554,8 +544,9 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   };
 });
 
-// ================== ADMIN ROUTES ================== //
+// ================== АДМИН-ПАНЕЛЬ ================== //
 
+// Вход в админ-панель
 router.post("/admin/login", async (ctx) => {
   const { password } = ctx.state.body || {};
   if (password === CONFIG.ADMIN_PASSWORD) {
@@ -566,6 +557,7 @@ router.post("/admin/login", async (ctx) => {
   }
 });
 
+// Получение заявок на вывод
 router.get("/admin/withdrawals", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -574,7 +566,7 @@ router.get("/admin/withdrawals", async (ctx) => {
     return;
   }
 
-  const { data: withdrawals, error } = await supabase
+  const { data: withdrawals } = await supabase
     .from("withdrawals")
     .select("*")
     .order("date", { ascending: false });
@@ -582,6 +574,7 @@ router.get("/admin/withdrawals", async (ctx) => {
   ctx.response.body = { success: true, withdrawals };
 });
 
+// Обновление статуса заявки на вывод
 router.post("/admin/withdrawals/:id", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -604,6 +597,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
   ctx.response.body = { success: true };
 });
 
+// Управление заданиями
 router.get("/admin/tasks", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -612,7 +606,7 @@ router.get("/admin/tasks", async (ctx) => {
     return;
   }
 
-  const { data: tasks, error } = await supabase
+  const { data: tasks } = await supabase
     .from("tasks")
     .select("*");
 
@@ -660,6 +654,7 @@ router.delete("/admin/tasks/:id", async (ctx) => {
   ctx.response.body = { success: true };
 });
 
+// Управление кастомными заданиями
 router.get("/admin/custom-tasks", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -668,7 +663,7 @@ router.get("/admin/custom-tasks", async (ctx) => {
     return;
   }
 
-  const { data: tasks, error } = await supabase
+  const { data: tasks } = await supabase
     .from("custom_tasks")
     .select("*");
 
@@ -716,8 +711,7 @@ router.delete("/admin/custom-tasks/:id", async (ctx) => {
   ctx.response.body = { success: true };
 });
 
-// ================== SERVER SETUP ================== //
-
+// Корневой эндпоинт
 router.get("/", (ctx) => {
   ctx.response.body = {
     success: true,
@@ -727,14 +721,17 @@ router.get("/", (ctx) => {
   };
 });
 
+// Настройка роутера
 app.use(router.routes());
 app.use(router.allowedMethods());
 
+// Обработка 404 ошибок
 app.use((ctx) => {
   ctx.response.status = 404;
   ctx.response.body = { success: false, error: "Endpoint not found" };
 });
 
+// Запуск сервера
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 await app.listen({ port });
