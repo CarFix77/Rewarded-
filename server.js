@@ -1,7 +1,6 @@
-import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
+{ Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { validateWebAppData } from "https://deno.land/x/telegram_webapp@v1.0.0/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -11,10 +10,8 @@ const CONFIG = {
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
-  BONUS_THRESHOLD: 200,
-  BONUS_AMOUNT: 0.005,
-  REWARD_URL: "https://test.adsgram.ai/reward?userid=[userId]",
-  BOT_TOKEN: "8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4"
+  BONUS_THRESHOLD: 200,    // Каждые 200 просмотров
+  BONUS_AMOUNT: 0.005      // Награда за каждые 200 просмотров
 };
 
 const supabase = createClient(
@@ -24,11 +21,6 @@ const supabase = createClient(
 
 const app = new Application();
 const router = new Router();
-
-// Валидация данных Telegram
-function verifyTelegramData(initData) {
-  return validateWebAppData(CONFIG.BOT_TOKEN, initData);
-}
 
 app.use(async (ctx, next) => {
   try {
@@ -68,21 +60,7 @@ app.use(async (ctx, next) => {
 });
 
 function generateId() {
-  return Math.floor(10000000 + Math.random() * 90000000);
-}
-
-async function getTotalViews(userId) {
-  const { data, error } = await supabase
-    .from("views")
-    .select("count")
-    .eq("user_id", userId);
-
-  if (error) {
-    console.error("Error getting total views:", error);
-    return 0;
-  }
-
-  return data.reduce((sum, row) => sum + row.count, 0);
+  return Math.floor(100000 + Math.random() * 900000);
 }
 
 async function cleanupOldData() {
@@ -90,7 +68,7 @@ async function cleanupOldData() {
     await supabase
       .from("views")
       .delete()
-      .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      .lt("date", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
     const { data: inactiveUsers } = await supabase
       .from("users")
@@ -129,134 +107,17 @@ cleanupOldData();
 
 // ================== ROUTES ================== //
 
-// Точка входа для WebApp
-router.get("/webapp", (ctx) => {
-  ctx.response.headers.set("Content-Type", "text/html");
-  ctx.response.body = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AdRewards PRO</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <style>
-    body { background: #0c1a12; color: white; text-align: center; padding: 50px; }
-    .loader { 
-      border: 16px solid #1a2e22; 
-      border-top: 16px solid #3d9970; 
-      border-radius: 50%; 
-      width: 120px; 
-      height: 120px; 
-      animation: spin 2s linear infinite; 
-      margin: 0 auto; 
-    }
-    @keyframes spin { 
-      0% { transform: rotate(0deg); } 
-      100% { transform: rotate(360deg); } 
-    }
-  </style>
-</head>
-<body>
-  <div class="loader"></div>
-  <p>Загрузка приложения...</p>
-  <script>
-    // Получаем данные от Telegram
-    const initData = new URLSearchParams(window.location.hash.substring(1));
-    const tgParams = Object.fromEntries(initData.entries());
-    
-    // Проверяем и перенаправляем
-    fetch('/verify-telegram', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tgParams)
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (data.success) {
-        // Перенаправляем с параметрами пользователя
-        window.location.href = \`/?tg_user=\${encodeURIComponent(JSON.stringify(data.user))}\`;
-      } else {
-        document.body.innerHTML = '<h2>Ошибка авторизации</h2><p>Попробуйте перезапустить приложение</p>';
-      }
-    });
-  </script>
-</body>
-</html>`;
-});
-
-// Проверка данных Telegram
-router.post("/verify-telegram", async (ctx) => {
-  const data = await ctx.request.body().value;
-  
-  // Преобразуем данные в строку для проверки
-  const initDataString = new URLSearchParams(data).toString();
-  
-  if (!verifyTelegramData(initDataString)) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Invalid Telegram data" };
-    return;
-  }
-  
-  const user = data.user ? JSON.parse(data.user) : {};
-  ctx.response.body = {
-    success: true,
-    user: {
-      id: user.id,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      username: user.username
-    }
-  };
-});
-
 router.post("/register", async (ctx) => {
-  const body = ctx.state.body || {};
-  const refCode = body.refCode;
-  const telegramId = body.telegramId;
-  
-  if (!telegramId) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Telegram ID is required" };
-    return;
-  }
-
-  // Режим тестирования
-  if (telegramId.startsWith("TEST")) {
-    ctx.response.body = {
-      success: true,
-      userId: telegramId,
-      refCode: "TESTREF",
-      balance: 1.234,
-      referrals: 3,
-      refEarnings: 0.45
-    };
-    return;
-  }
-
-  // Проверяем существующего пользователя
-  const { data: existingUser, error: existingError } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", telegramId)
-    .single();
-
-  if (existingUser) {
-    ctx.response.body = {
-      success: true,
-      userId: telegramId,
-      refCode: existingUser.ref_code,
-      message: "User already exists"
-    };
-    return;
-  }
-
+  const { refCode } = ctx.state.body || {};
+  const userId = `user_${generateId()}`;
   const userRefCode = generateId().toString();
 
   const { error } = await supabase
     .from("users")
     .insert({
-      user_id: telegramId,
+      user_id: userId,
       balance: 0,
+      total_views: 0,
       ref_code: userRefCode,
       ref_count: 0,
       ref_earnings: 0,
@@ -264,18 +125,13 @@ router.post("/register", async (ctx) => {
     });
 
   if (error) {
-    console.error("Registration error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false, 
-      error: "Database error",
-      details: error.message
-    };
+    ctx.response.body = { success: false, error: "Database error" };
     return;
   }
 
   if (refCode) {
-    const { data: referrer, error: refError } = await supabase
+    const { data: referrer } = await supabase
       .from("users")
       .select("*")
       .eq("ref_code", refCode)
@@ -297,7 +153,7 @@ router.post("/register", async (ctx) => {
 
   ctx.response.body = {
     success: true,
-    userId: telegramId,
+    userId,
     refCode: userRefCode,
     refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
   };
@@ -348,8 +204,7 @@ router.all("/reward", async (ctx) => {
   }
 
   // Рассчитываем бонус за накопленные просмотры
-  const totalViews = await getTotalViews(userId);
-  const newTotalViews = totalViews + 1;
+  const newTotalViews = (user.total_views || 0) + 1;
   let bonusReward = 0;
   
   if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
@@ -372,7 +227,8 @@ router.all("/reward", async (ctx) => {
   const { error: userUpdateError } = await supabase
     .from("users")
     .update({ 
-      balance: newBalance
+      balance: newBalance,
+      total_views: newTotalViews 
     })
     .eq("user_id", userId);
 
@@ -380,21 +236,6 @@ router.all("/reward", async (ctx) => {
     ctx.response.status = 500;
     ctx.response.body = { success: false, error: "Database update failed" };
     return;
-  }
-
-  // Отправка reward event
-  try {
-    if (CONFIG.REWARD_URL) {
-      const rewardUrl = CONFIG.REWARD_URL.replace("[userId]", userId);
-      console.log(`Sending reward event to: ${rewardUrl}`);
-      
-      const response = await fetch(rewardUrl);
-      if (!response.ok) {
-        console.warn(`Reward event failed: ${response.status} ${response.statusText}`);
-      }
-    }
-  } catch (error) {
-    console.error("Error sending reward event:", error);
   }
 
   ctx.response.body = {
@@ -422,7 +263,6 @@ router.get("/user/:userId", async (ctx) => {
     return;
   }
   
-  const totalViews = await getTotalViews(userId);
   const { data: completedTasks } = await supabase
     .from("completed_tasks")
     .select("task_id")
@@ -431,7 +271,6 @@ router.get("/user/:userId", async (ctx) => {
   ctx.response.body = {
     success: true,
     ...user,
-    total_views: totalViews,
     completedTasks: completedTasks?.map(t => t.task_id) || []
   };
 });
@@ -452,10 +291,7 @@ router.get("/views/:userId/:date", async (ctx) => {
 });
 
 router.post("/withdraw", async (ctx) => {
-  const body = ctx.state.body || {};
-  const userId = body.userId;
-  const wallet = body.wallet;
-  const amount = parseFloat(body.amount);
+  const { userId, wallet, amount } = ctx.state.body || {};
   
   if (!userId || !wallet || !amount) {
     ctx.response.status = 400;
@@ -487,8 +323,7 @@ router.post("/withdraw", async (ctx) => {
     user_id: userId,
     amount,
     wallet,
-    status: "pending",
-    date: new Date().toISOString()
+    status: "pending"
   });
 
   if (withdrawError) {
@@ -539,8 +374,7 @@ router.get("/tasks", async (ctx) => {
 
 router.post("/user/:userId/complete-task", async (ctx) => {
   const userId = ctx.params.userId;
-  const body = ctx.state.body || {};
-  const taskId = body.taskId;
+  const { taskId } = ctx.state.body || {};
   
   console.log(`Complete task request: user=${userId}, task=${taskId}`);
   
@@ -653,9 +487,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
 // ================== ADMIN ROUTES ================== //
 
 router.post("/admin/login", async (ctx) => {
-  const body = ctx.state.body || {};
-  const password = body.password;
-  
+  const { password } = ctx.state.body || {};
   if (password === CONFIG.ADMIN_PASSWORD) {
     ctx.response.body = { success: true, token: "admin_" + generateId() };
   } else {
@@ -688,8 +520,7 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
     return;
   }
 
-  const body = ctx.state.body || {};
-  const status = body.status;
+  const { status } = ctx.state.body || {};
   const withdrawalId = ctx.params.id;
 
   await supabase
@@ -726,13 +557,7 @@ router.post("/admin/tasks", async (ctx) => {
     return;
   }
 
-  const body = ctx.state.body || {};
-  const title = body.title;
-  const reward = parseFloat(body.reward);
-  const description = body.description;
-  const url = body.url;
-  const cooldown = parseInt(body.cooldown) || 10;
-  
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
   const taskId = `task_${generateId()}`;
   
   await supabase
@@ -740,10 +565,10 @@ router.post("/admin/tasks", async (ctx) => {
     .insert({
       task_id: taskId,
       title,
-      reward,
+      reward: parseFloat(reward),
       description,
       url,
-      cooldown
+      cooldown: parseInt(cooldown) || 10
     });
   
   ctx.response.body = { success: true, taskId };
@@ -788,13 +613,7 @@ router.post("/admin/custom-tasks", async (ctx) => {
     return;
   }
 
-  const body = ctx.state.body || {};
-  const title = body.title;
-  const reward = parseFloat(body.reward);
-  const description = body.description;
-  const url = body.url;
-  const cooldown = parseInt(body.cooldown) || 10;
-  
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
   const taskId = `custom_${generateId()}`;
   
   await supabase
@@ -802,10 +621,10 @@ router.post("/admin/custom-tasks", async (ctx) => {
     .insert({
       task_id: taskId,
       title,
-      reward,
+      reward: parseFloat(reward),
       description,
       url,
-      cooldown
+      cooldown: parseInt(cooldown) || 10
     });
   
   ctx.response.body = { success: true, taskId };
@@ -848,4 +667,4 @@ app.use((ctx) => {
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-await app.listen({ port }); 
+await app.listen({ port });
