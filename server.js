@@ -11,7 +11,8 @@ const CONFIG = {
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
   BONUS_THRESHOLD: 200,
-  BONUS_AMOUNT: 0.005
+  BONUS_AMOUNT: 0.005,
+  REWARD_URL: "https://test.adsgram.ai/reward?userid=[userId]"
 };
 
 const supabase = createClient(
@@ -122,14 +123,37 @@ cleanupOldData();
 // ================== ROUTES ================== //
 
 router.post("/register", async (ctx) => {
-  const { refCode } = ctx.state.body || {};
-  const userId = `user_${generateId()}`;
+  const { refCode, telegramId } = ctx.state.body || {};
+  
+  if (!telegramId) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Telegram ID is required" };
+    return;
+  }
+
+  // Проверяем существующего пользователя
+  const { data: existingUser, error: existingError } = await supabase
+    .from("users")
+    .select("*")
+    .eq("user_id", telegramId)
+    .single();
+
+  if (existingUser) {
+    ctx.response.body = {
+      success: true,
+      userId: telegramId,
+      refCode: existingUser.ref_code,
+      message: "User already exists"
+    };
+    return;
+  }
+
   const userRefCode = generateId().toString();
 
   const { error } = await supabase
     .from("users")
     .insert({
-      user_id: userId,
+      user_id: telegramId,
       balance: 0,
       ref_code: userRefCode,
       ref_count: 0,
@@ -171,7 +195,7 @@ router.post("/register", async (ctx) => {
 
   ctx.response.body = {
     success: true,
-    userId,
+    userId: telegramId,
     refCode: userRefCode,
     refLink: `https://t.me/Ad_Rew_ards_bot?start=${userRefCode}`
   };
@@ -254,6 +278,21 @@ router.all("/reward", async (ctx) => {
     ctx.response.status = 500;
     ctx.response.body = { success: false, error: "Database update failed" };
     return;
+  }
+
+  // Отправка reward event
+  try {
+    if (CONFIG.REWARD_URL) {
+      const rewardUrl = CONFIG.REWARD_URL.replace("[userId]", userId);
+      console.log(`Sending reward event to: ${rewardUrl}`);
+      
+      const response = await fetch(rewardUrl);
+      if (!response.ok) {
+        console.warn(`Reward event failed: ${response.status} ${response.statusText}`);
+      }
+    }
+  } catch (error) {
+    console.error("Error sending reward event:", error);
   }
 
   ctx.response.body = {
