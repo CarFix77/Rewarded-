@@ -696,7 +696,7 @@
     };
 
     const state = {
-      userId: null,
+      userId: null, // Telegram ID пользователя
       balance: 0,
       adViews: 0,
       totalViews: 0,
@@ -707,7 +707,7 @@
       completedTasks: [],
       adminToken: null,
       tasks: [],
-      currentWithdrawalFilter: 'pending' // Для сохранения текущего фильтра
+      currentWithdrawalFilter: 'pending'
     };
 
     function generateTaskId() {
@@ -732,85 +732,74 @@
 
     async function initUser() {
       try {
-        state.userId = localStorage.getItem('userId');
+        // Получаем Telegram ID из объекта Telegram WebApp
+        const user = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        if (!user || !user.id) {
+          throw new Error("Telegram user data not available");
+        }
+        const telegramId = user.id.toString();
         
-        if (!state.userId) {
-          const urlParams = new URLSearchParams(window.location.search);
-          const refCode = urlParams.get('ref') || urlParams.get('start');
+        // Проверяем, зарегистрирован ли пользователь
+        const response = await fetch(`${CONFIG.apiUrl}/user/${telegramId}`);
+        
+        if (response.status === 404) {
+          // Пользователь не найден - регистрируем
+          const refCode = new URLSearchParams(window.location.search).get('ref') || 
+                          new URLSearchParams(window.location.search).get('start');
           
-          const response = await fetch(`${CONFIG.apiUrl}/register`, {
+          const registerResponse = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
               'Accept': 'application/json'
             },
-            body: JSON.stringify({ refCode: refCode || null })
+            body: JSON.stringify({ 
+              telegramId: telegramId,
+              refCode: refCode 
+            })
           });
           
-          if (!response.ok) {
-            const error = await response.text();
-            throw new Error(error || 'Ошибка регистрации');
+          if (!registerResponse.ok) {
+            const errorData = await registerResponse.json();
+            throw new Error(errorData.error || "Registration failed");
           }
           
-          const data = await response.json();
-          state.userId = data.userId;
-          state.referralCode = data.refCode || generateReferralCode();
-          localStorage.setItem('userId', state.userId);
-          
-          if (refCode) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
+          const registerData = await registerResponse.json();
+          state.userId = telegramId;
+          state.referralCode = registerData.refCode || generateReferralCode();
+        } else if (response.ok) {
+          // Пользователь найден
+          const userData = await response.json();
+          state.userId = telegramId;
+          state.balance = userData.balance || 0;
+          state.referrals = userData.ref_count || 0;
+          state.referralEarnings = userData.ref_earnings || 0;
+          state.referralCode = userData.ref_code || generateReferralCode();
+          state.completedTasks = userData.completedTasks || [];
+        } else {
+          throw new Error("Failed to load user data");
         }
         
-        await loadUserData();
-      } catch (error) {
-        console.error("Ошибка инициализации:", error);
-        
-        if (error.message.includes("not found")) {
-          localStorage.removeItem('userId');
-          state.userId = null;
-          await initUser();
-          return;
-        }
-        
-        showError(error.message || "Ошибка подключения к серверу");
-        showConnectionError(true);
-      }
-    }
-
-    async function loadUserData() {
-      try {
-        const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
-        
-        if (response.status === 404) {
-          localStorage.removeItem('userId');
-          state.userId = null;
-          await initUser();
-          return;
-        }
-        
-        if (!response.ok) {
-          throw new Error('Ошибка загрузки данных пользователя');
-        }
-        
-        const userData = await response.json();
+        // Загружаем статистику просмотров
         const today = new Date().toISOString().split('T')[0];
         const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
         const statsData = statsResponse.ok ? await statsResponse.json() : { views: 0 };
         
-        state.balance = userData.balance || 0;
-        state.referrals = userData.ref_count || 0;
-        state.referralEarnings = userData.ref_earnings || 0;
-        state.totalViews = userData.total_views || 0;
-        state.referralCode = userData.ref_code || state.referralCode || generateReferralCode();
         state.adViews = statsData.views || 0;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
-        state.completedTasks = userData.completedTasks || [];
+        
+        // Загружаем общее количество просмотров
+        const totalResponse = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
+        if (totalResponse.ok) {
+          const userData = await totalResponse.json();
+          state.totalViews = userData.total_views || 0;
+        }
         
         updateUI();
       } catch (error) {
-        console.error("Ошибка загрузки данных:", error);
-        showError(error.message || "Ошибка загрузки данных");
+        console.error("Ошибка инициализации:", error);
+        showError(error.message || "Ошибка подключения к серверу");
+        showConnectionError(true);
       }
     }
 
@@ -994,7 +983,7 @@
           `;
           container.appendChild(taskEl);
         } else {
-          // Обычные задания - УБРАН ТАЙМЕР ИЗ ОТОБРАЖЕНИЯ
+          // Обычные задания
           const isCompleted = state.completedTasks.includes(task.id);
           const taskEl = document.createElement('div');
           taskEl.className = 'task-card';
@@ -1024,7 +1013,6 @@
     }
 
     async function startTask(taskId) {
-      console.log("Starting task:", taskId);
       const task = state.tasks.find(t => t.id === taskId);
       
       if (!task) {
@@ -1047,8 +1035,6 @@
     }
 
     async function completeTask(taskId) {
-      console.log("Completing task:", taskId);
-      
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
           method: 'POST',
@@ -1072,11 +1058,7 @@
         renderTasks();
         showNotification(`Задание выполнено! +$${result.reward.toFixed(3)}`);
       } catch (error) {
-        console.error("Task completion error:", {
-          taskId,
-          error: error.message,
-          response: error.response ? await error.response.json() : null
-        });
+        console.error("Task completion error:", error);
         showError(error.message || "Ошибка выполнения задания");
       }
     }
@@ -1125,291 +1107,10 @@
 
     function showAdminPanel() {
       document.getElementById('admin-panel').classList.remove('hidden');
-      loadWithdrawals();
-      loadAdminTasks();
     }
 
     function hideAdminPanel() {
       document.getElementById('admin-panel').classList.add('hidden');
-    }
-
-    async function loadWithdrawals(filter = 'pending') {
-      try {
-        state.currentWithdrawalFilter = filter; // Сохраняем текущий фильтр
-        
-        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
-          headers: { 
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка загрузки заявок");
-        }
-        
-        const allWithdrawals = await response.json();
-        const filtered = allWithdrawals.withdrawals?.filter(w => w.status === filter) || [];
-        renderWithdrawals(filtered, filter);
-      } catch (error) {
-        console.error("Ошибка загрузки заявок:", error);
-        document.getElementById('withdrawals-list').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
-            Ошибка загрузки заявок
-          </p>`;
-      }
-    }
-
-    function renderWithdrawals(withdrawals, filter) {
-      const container = document.getElementById('withdrawals-list');
-      container.innerHTML = '';
-      
-      if (!withdrawals || withdrawals.length === 0) {
-        container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
-            Нет заявок со статусом "${getStatusText(filter)}"
-          </p>`;
-        return;
-      }
-      
-      withdrawals.forEach(withdrawal => {
-        const item = document.createElement('div');
-        item.className = 'withdrawal-item';
-        
-        // ИСПРАВЛЕНИЕ: используем withdrawal.withdrawal_id вместо withdrawal.id
-        const withdrawalId = withdrawal.withdrawal_id || withdrawal.id;
-        
-        item.innerHTML = `
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong>#${withdrawalId}</strong>
-            <div>
-              <span>$${(withdrawal.amount || 0).toFixed(2)}</span>
-              <span class="status-badge status-${withdrawal.status}">
-                ${getStatusText(withdrawal.status)}
-              </span>
-            </div>
-          </div>
-          <div style="margin: 8px 0; font-size: 14px;">
-            <div>Кошелек: ${withdrawal.wallet || 'Не указан'}</div>
-            <div>Пользователь: ${withdrawal.userId || 'Неизвестен'}</div>
-            <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
-          </div>
-          <div class="admin-actions">
-            ${withdrawal.status === 'pending' ? `
-            <button class="btn" onclick="processWithdrawal('${withdrawalId}', 'completed')">
-              Одобрить
-            </button>
-            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawalId}', 'rejected')">
-              Отклонить
-            </button>
-            ` : ''}
-            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawalId}')">
-              Удалить
-            </button>
-          </div>`;
-        container.appendChild(item);
-      });
-    }
-
-    async function processWithdrawal(id, status) {
-      try {
-        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({ status })
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка обработки заявки");
-        }
-        
-        showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
-        
-        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
-        loadWithdrawals(state.currentWithdrawalFilter);
-      } catch (error) {
-        console.error("Ошибка:", error);
-        showError(error.message || "Ошибка обработки заявки");
-      }
-    }
-
-    async function deleteWithdrawal(id) {
-      try {
-        const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
-          method: 'DELETE',
-          headers: { 
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка удаления заявки");
-        }
-        
-        showNotification(`Заявка #${id} удалена!`);
-        
-        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
-        loadWithdrawals(state.currentWithdrawalFilter);
-      } catch (error) {
-        console.error("Ошибка:", error);
-        showError(error.message || "Ошибка удаления заявки");
-      }
-    }
-
-    async function loadAdminTasks() {
-      try {
-        const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
-          headers: { 
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка загрузки заданий");
-        }
-        
-        const data = await response.json();
-        state.tasks = Array.isArray(data.tasks) 
-          ? data.tasks.map(normalizeTask)
-          : [];
-          
-        renderAdminTasks();
-      } catch (error) {
-        console.error("Ошибка загрузки заданий:", error);
-        state.tasks = [];
-        document.getElementById('current-tasks').innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
-            Ошибка загрузки заданий
-          </p>`;
-      }
-    }
-
-    function renderAdminTasks() {
-      const container = document.getElementById('current-tasks');
-      container.innerHTML = '';
-      
-      if (!state.tasks || state.tasks.length === 0) {
-        container.innerHTML = `
-          <p style="text-align: center; color: var(--secondary-text);">
-            Нет созданных заданий
-          </p>`;
-        return;
-      }
-      
-      state.tasks.forEach(task => {
-        const taskEl = document.createElement('div');
-        taskEl.className = 'admin-task-item';
-        taskEl.innerHTML = `
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong>${task.title}</strong>
-            <button class="btn btn-danger" onclick="deleteTask('${task.id}')">
-              Удалить
-            </button>
-          </div>
-          <p style="white-space: pre-line; margin: 8px 0;">${task.description}</p>
-          <div style="display: flex; justify-content: space-between;">
-            <span>Награда: $${task.reward.toFixed(2)}</span>
-            <span>Таймер: ${task.cooldown} сек</span>
-          </div>
-          <div style="margin-top: 8px;">
-            <a href="${task.url}" target="_blank" style="color: var(--accent-color);">${task.url}</a>
-          </div>`;
-        container.appendChild(taskEl);
-      });
-    }
-
-    async function addTask() {
-      const title = document.getElementById('new-task-title').value.trim();
-      const reward = parseFloat(document.getElementById('new-task-reward').value);
-      const description = document.getElementById('new-task-desc').value.trim();
-      const url = document.getElementById('new-task-url').value.trim();
-      const cooldown = parseInt(document.getElementById('new-task-cooldown').value) || 10;
-
-      if (!title || !reward || !description || !url) {
-        showError("Заполните все поля!");
-        return;
-      }
-
-      try {
-        const newTask = normalizeTask({
-          title,
-          reward,
-          description,
-          url,
-          cooldown
-        });
-
-        const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify(newTask)
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка добавления задания");
-        }
-        
-        const result = await response.json();
-        state.tasks = [...state.tasks, normalizeTask(result.task || newTask)];
-        renderAdminTasks();
-        
-        document.getElementById('new-task-title').value = '';
-        document.getElementById('new-task-reward').value = '';
-        document.getElementById('new-task-desc').value = '';
-        document.getElementById('new-task-url').value = '';
-        document.getElementById('new-task-cooldown').value = '10';
-        
-        showNotification("Задание добавлено!");
-      } catch (error) {
-        console.error("Ошибка добавления задания:", error);
-        showError(error.message || "Ошибка добавления задания");
-      }
-    }
-
-    async function deleteTask(taskId) {
-      if (!confirm("Удалить это задание?")) return;
-      
-      try {
-        const response = await fetch(`${CONFIG.apiUrl}/admin/tasks/${taskId}`, {
-          method: 'DELETE',
-          headers: { 
-            'Authorization': `Bearer ${state.adminToken}`,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error("Ошибка удаления задания");
-        }
-        
-        state.tasks = state.tasks.filter(t => t.id !== taskId);
-        renderAdminTasks();
-        showNotification("Задание удалено!");
-      } catch (error) {
-        console.error("Ошибка удаления задания:", error);
-        showError(error.message || "Ошибка удаления задания");
-      }
-    }
-
-    function showPage(pageId) {
-      document.querySelectorAll('.page').forEach(page => {
-        page.classList.remove('active');
-      });
-      document.getElementById(pageId).classList.add('active');
-      
-      if (pageId === 'tasks-page') {
-        loadTasks();
-      }
     }
 
     function updateUI() {
@@ -1471,13 +1172,15 @@
       document.getElementById('app-container').style.display = show ? 'none' : 'block';
     }
 
-    function getStatusText(status) {
-      const statuses = {
-        'pending': 'Ожидает',
-        'completed': 'Выполнено',
-        'rejected': 'Отклонено'
-      };
-      return statuses[status] || status;
+    function showPage(pageId) {
+      document.querySelectorAll('.page').forEach(page => {
+        page.classList.remove('active');
+      });
+      document.getElementById(pageId).classList.add('active');
+      
+      if (pageId === 'tasks-page') {
+        loadTasks();
+      }
     }
 
     async function init() {
