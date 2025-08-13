@@ -1,6 +1,7 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { validateWebAppData } from "https://deno.land/x/telegram_webapp@v1.0.0/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -12,7 +13,8 @@ const CONFIG = {
   ADMIN_PASSWORD: "8223Nn8223",
   BONUS_THRESHOLD: 200,
   BONUS_AMOUNT: 0.005,
-  REWARD_URL: "https://test.adsgram.ai/reward?userid=[userId]"
+  REWARD_URL: "https://test.adsgram.ai/reward?userid=[userId]",
+  BOT_TOKEN: "8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4"
 };
 
 const supabase = createClient(
@@ -22,6 +24,11 @@ const supabase = createClient(
 
 const app = new Application();
 const router = new Router();
+
+// Валидация данных Telegram
+function verifyTelegramData(initData: string): boolean {
+  return validateWebAppData(CONFIG.BOT_TOKEN, initData);
+}
 
 app.use(async (ctx, next) => {
   try {
@@ -64,7 +71,7 @@ function generateId() {
   return Math.floor(10000000 + Math.random() * 90000000);
 }
 
-async function getTotalViews(userId) {
+async function getTotalViews(userId: string) {
   const { data, error } = await supabase
     .from("views")
     .select("count")
@@ -122,12 +129,105 @@ cleanupOldData();
 
 // ================== ROUTES ================== //
 
+// Точка входа для WebApp
+router.get("/webapp", (ctx) => {
+  ctx.response.headers.set("Content-Type", "text/html");
+  ctx.response.body = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AdRewards PRO</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body { background: #0c1a12; color: white; text-align: center; padding: 50px; }
+    .loader { 
+      border: 16px solid #1a2e22; 
+      border-top: 16px solid #3d9970; 
+      border-radius: 50%; 
+      width: 120px; 
+      height: 120px; 
+      animation: spin 2s linear infinite; 
+      margin: 0 auto; 
+    }
+    @keyframes spin { 
+      0% { transform: rotate(0deg); } 
+      100% { transform: rotate(360deg); } 
+    }
+  </style>
+</head>
+<body>
+  <div class="loader"></div>
+  <p>Загрузка приложения...</p>
+  <script>
+    // Получаем данные от Telegram
+    const initData = new URLSearchParams(window.location.hash.substring(1));
+    const tgParams = Object.fromEntries(initData.entries());
+    
+    // Проверяем и перенаправляем
+    fetch('/verify-telegram', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tgParams)
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        // Перенаправляем с параметрами пользователя
+        window.location.href = \`/?tg_user=\${encodeURIComponent(JSON.stringify(data.user))}\`;
+      } else {
+        document.body.innerHTML = '<h2>Ошибка авторизации</h2><p>Попробуйте перезапустить приложение</p>';
+      }
+    });
+  </script>
+</body>
+</html>`;
+});
+
+// Проверка данных Telegram
+router.post("/verify-telegram", async (ctx) => {
+  const data = await ctx.request.body().value;
+  
+  // Преобразуем данные в строку для проверки
+  const initDataString = new URLSearchParams(data).toString();
+  
+  if (!verifyTelegramData(initDataString)) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Invalid Telegram data" };
+    return;
+  }
+  
+  const user = data.user ? JSON.parse(data.user) : {};
+  ctx.response.body = {
+    success: true,
+    user: {
+      id: user.id,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      username: user.username
+    }
+  };
+});
+
 router.post("/register", async (ctx) => {
   const { refCode, telegramId } = ctx.state.body || {};
   
   if (!telegramId) {
     ctx.response.status = 400;
     ctx.response.body = { success: false, error: "Telegram ID is required" };
+    return;
+  }
+
+  // Режим тестирования
+  if (telegramId.startsWith("TEST")) {
+    ctx.response.body = {
+      success: true,
+      userId: telegramId,
+      refCode: "TESTREF",
+      balance: 1.234,
+      referrals: 3,
+      refEarnings: 0.45
+    };
     return;
   }
 
