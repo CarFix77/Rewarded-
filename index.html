@@ -5,201 +5,151 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AdRewards PRO</title>
   <style>
-    :root {
-      --primary-color: #1a5c32;
-      --primary-dark: #0f3d20;
-      --primary-light: #2d7d46;
-      --bg-color: #0c1a12;
-      --card-color: #1a2e22;
-      --text-color: #e0f0e8;
-      --secondary-text: #8fa89a;
-      --accent-color: #3d9970;
-      --error-color: #c0392b;
-    }
-
     body {
-      font-family: 'Segoe UI', Roboto, sans-serif;
-      background-color: var(--bg-color);
-      color: var(--text-color);
-      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0c1a12;
+      color: white;
+      text-align: center;
       padding: 20px;
     }
-
-    .container {
-      max-width: 500px;
-      margin: 0 auto;
-    }
-
     .card {
-      background-color: var(--card-color);
-      border-radius: 16px;
+      background: #1a2e22;
+      border-radius: 10px;
       padding: 20px;
-      margin-bottom: 20px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      margin: 20px auto;
+      max-width: 500px;
     }
-
     .btn {
-      background-color: var(--primary-color);
+      background: #2d7d46;
       color: white;
       border: none;
-      padding: 16px;
-      border-radius: 12px;
-      width: 100%;
+      padding: 15px 20px;
+      border-radius: 10px;
       font-size: 16px;
       cursor: pointer;
       margin-top: 15px;
+      display: inline-block;
+      text-decoration: none;
     }
-
     .hidden {
       display: none;
-    }
-
-    #auth-message {
-      text-align: center;
-      padding: 20px;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div id="app-content" class="hidden">
-      <div class="card">
-        <h2>Ваш профиль</h2>
-        <p>ID пользователя: <span id="user-id"></span></p>
-        <p>Баланс: <span id="user-balance">$0.00</span></p>
-      </div>
+  <div id="app-content" class="hidden">
+    <div class="card">
+      <h2>Добро пожаловать!</h2>
+      <p>Ваш ID: <strong id="user-id"></strong></p>
+      <p>Статус: <span id="status">Авторизован в Telegram</span></p>
     </div>
+  </div>
 
-    <div id="auth-message">
-      <h2>Инициализация приложения</h2>
-      <p id="status-text">Проверка авторизации...</p>
-      <a href="https://t.me/Ad_Rew_ards_bot?startapp=rewards" 
-         class="btn hidden" 
-         id="open-in-tg-btn">
-        Открыть в Telegram
-      </a>
+  <div id="auth-message">
+    <div class="card">
+      <h2>Требуется авторизация</h2>
+      <p id="status-text">Проверяем платформу...</p>
+      <a href="https://t.me/Ad_Rew_ards_bot?startapp=rewards" class="btn" id="tg-btn">Открыть в Telegram</a>
+      <p style="margin-top: 20px; color: #8fa89a;">
+        Если вы уже в Telegram, попробуйте:<br>
+        1. Обновить страницу<br>
+        2. Перезапустить бота<br>
+        3. Очистить кэш браузера
+      </p>
     </div>
   </div>
 
   <script>
-    // 1. Основная функция получения ID
+    // 1. Улучшенная проверка Telegram WebApp
+    function isInTelegramWebApp() {
+      // Основные признаки WebApp
+      const isWebApp = !!window.Telegram?.WebApp?.platform;
+      
+      // Дополнительные проверки
+      const hasInitData = !!window.Telegram?.WebApp?.initData;
+      const hasStartParam = !!window.Telegram?.WebApp?.startParam;
+      
+      // Проверка по user-agent (дополнительно)
+      const isTelegramBrowser = navigator.userAgent.includes('TelegramWebApp');
+      
+      return isWebApp || hasInitData || hasStartParam || isTelegramBrowser;
+    }
+
+    // 2. Получение User ID
     function getTelegramUserId() {
       try {
-        // Проверка наличия Telegram WebApp
-        if (!window.Telegram?.WebApp) {
-          console.log('Telegram WebApp не обнаружен');
-          return null;
-        }
-
-        // Проверка инициализационных данных
-        const tgWebApp = window.Telegram.WebApp;
+        const tgWebApp = window.Telegram?.WebApp;
+        if (!tgWebApp) return null;
         
-        // Способ 1: Через initDataUnsafe
+        // Основной способ
         if (tgWebApp.initDataUnsafe?.user?.id) {
           return tgWebApp.initDataUnsafe.user.id.toString();
         }
-
-        // Способ 2: Через парсинг initData
+        
+        // Альтернативный способ через initData
         if (tgWebApp.initData) {
           const params = new URLSearchParams(tgWebApp.initData);
           const userStr = params.get('user');
           if (userStr) {
-            try {
-              const user = JSON.parse(userStr);
-              if (user?.id) return user.id.toString();
-            } catch (e) {
-              console.error('Ошибка парсинга user:', e);
-            }
+            const user = JSON.parse(userStr);
+            return user?.id?.toString();
           }
         }
-
-        // Способ 3: Через start_param
-        if (tgWebApp.initDataUnsafe?.start_param) {
-          const startParam = tgWebApp.initDataUnsafe.start_param;
-          if (/^\d+$/.test(startParam)) {
-            return startParam;
-          }
-        }
-
-        console.log('Не удалось найти ID пользователя');
+        
         return null;
-
-      } catch (error) {
-        console.error('Ошибка при получении ID:', error);
+      } catch (e) {
+        console.error('Ошибка при получении ID:', e);
         return null;
       }
     }
 
-    // 2. Инициализация приложения
+    // 3. Инициализация приложения
     function initApp() {
-      const userId = getTelegramUserId();
-      const authMessage = document.getElementById('auth-message');
-      const appContent = document.getElementById('app-content');
-      const openInTgBtn = document.getElementById('open-in-tg-btn');
-      const statusText = document.getElementById('status-text');
-
-      if (userId) {
-        // Успешное получение ID
-        statusText.textContent = "Авторизация успешна!";
-        authMessage.classList.add('hidden');
-        appContent.classList.remove('hidden');
-        
-        // Показываем ID пользователя
+      const isTelegram = isInTelegramWebApp();
+      const userId = isTelegram ? getTelegramUserId() : null;
+      
+      if (isTelegram && userId) {
+        // Успешная авторизация
+        document.getElementById('app-content').classList.remove('hidden');
+        document.getElementById('auth-message').classList.add('hidden');
         document.getElementById('user-id').textContent = userId;
         
         // Здесь можно загружать данные пользователя
-        loadUserData(userId);
+        console.log('User ID:', userId);
         
       } else {
-        // Не удалось получить ID
-        statusText.textContent = "Требуется авторизация в Telegram";
-        openInTgBtn.classList.remove('hidden');
-        
-        // Проверяем, возможно мы уже в Telegram
-        if (window.Telegram?.WebApp) {
-          statusText.textContent += "\n(Обнаружен Telegram, но не удалось получить ID)";
-        }
+        // Показываем сообщение об авторизации
+        document.getElementById('auth-message').classList.remove('hidden');
+        document.getElementById('status-text').textContent = isTelegram 
+          ? "Не удалось получить ID пользователя" 
+          : "Приложение работает только в Telegram";
       }
     }
 
-    // 3. Загрузка данных пользователя (пример)
-    async function loadUserData(userId) {
-      try {
-        // Здесь должен быть ваш API запрос
-        // const response = await fetch(`https://your-api.com/user/${userId}`);
-        // const data = await response.json();
-        
-        // Для примера используем mock данные
-        const mockData = {
-          balance: (Math.random() * 10).toFixed(4)
-        };
-        
-        document.getElementById('user-balance').textContent = `$${mockData.balance}`;
-        
-      } catch (error) {
-        console.error('Ошибка загрузки данных:', error);
-        document.getElementById('user-balance').textContent = "Ошибка загрузки";
-      }
-    }
-
-    // 4. Запуск приложения с задержкой для инициализации WebApp
-    document.addEventListener('DOMContentLoaded', () => {
-      // Даем Telegram WebApp 1 секунду на инициализацию
+    // 4. Запуск с несколькими проверками
+    function startApp() {
+      // Первая проверка (немедленно)
+      initApp();
+      
+      // Повторная проверка через 1 секунду (на случай медленной инициализации WebApp)
       setTimeout(initApp, 1000);
       
-      // На всякий случай повторная проверка через 3 секунды
+      // Финальная проверка через 3 секунды
       setTimeout(() => {
-        if (document.getElementById('app-content').classList.contains('hidden')) {
-          initApp();
-        }
+        if (document.getElementById('auth-message').classList.contains('hidden')) return;
+        initApp();
+        console.log('Финальная проверка статуса');
       }, 3000);
-    });
+    }
 
-    // 5. Отладочная информация
+    // 5. Запуск приложения
+    document.addEventListener('DOMContentLoaded', startApp);
+
+    // 6. Отладочная информация
     console.log('Telegram WebApp:', window.Telegram?.WebApp);
-    console.log('initData:', window.Telegram?.WebApp?.initData);
-    console.log('initDataUnsafe:', window.Telegram?.WebApp?.initDataUnsafe);
     console.log('User:', window.Telegram?.WebApp?.initDataUnsafe?.user);
+    console.log('Platform:', window.Telegram?.WebApp?.platform);
+    console.log('UserAgent:', navigator.userAgent);
   </script>
 </body>
 </html>
