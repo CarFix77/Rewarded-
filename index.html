@@ -457,6 +457,19 @@
       margin-left: 5px;
     }
 
+    .test-mode-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      background: #f39c12;
+      color: white;
+      text-align: center;
+      padding: 8px;
+      font-size: 14px;
+      z-index: 1000;
+    }
+
     @media (max-width: 480px) {
       .task-header {
         flex-direction: column;
@@ -696,7 +709,7 @@
     };
 
     const state = {
-      userId: null, // Telegram ID пользователя
+      userId: null,
       balance: 0,
       adViews: 0,
       totalViews: 0,
@@ -707,8 +720,28 @@
       completedTasks: [],
       adminToken: null,
       tasks: [],
-      currentWithdrawalFilter: 'pending'
+      currentWithdrawalFilter: 'pending',
+      isTestMode: false
     };
+
+    // Инициализация Telegram WebApp
+    if (window.Telegram?.WebApp) {
+      window.Telegram.WebApp.expand();
+      window.Telegram.WebApp.enableClosingConfirmation();
+      window.Telegram.WebApp.ready();
+      
+      // Для тестирования в браузере
+      if (!window.Telegram.WebApp.initDataUnsafe) {
+        window.Telegram.WebApp.initDataUnsafe = {
+          user: {
+            id: 123456789,
+            first_name: "Test",
+            last_name: "User",
+            username: "test_user"
+          }
+        };
+      }
+    }
 
     function generateTaskId() {
       return 'task_' + Math.random().toString(36).substr(2, 9);
@@ -732,14 +765,37 @@
 
     async function initUser() {
       try {
-        // Получаем Telegram ID из объекта Telegram WebApp
-        const user = window.Telegram?.WebApp?.initDataUnsafe?.user;
-        if (!user || !user.id) {
+        // Проверяем тестовый режим
+        const urlParams = new URLSearchParams(window.location.search);
+        const testUserId = urlParams.get('test_user_id');
+        
+        if (testUserId) {
+          state.userId = testUserId;
+          state.isTestMode = true;
+          state.balance = 0.5;
+          state.referralCode = "TEST" + Math.random().toString(36).substr(2, 6).toUpperCase();
+          state.adViews = 5;
+          state.totalViews = 50;
+          
+          // Показываем баннер тестового режима
+          const banner = document.createElement('div');
+          banner.className = 'test-mode-banner';
+          banner.textContent = 'ТЕСТОВЫЙ РЕЖИМ | Данные не сохраняются';
+          document.body.prepend(banner);
+          
+          updateUI();
+          return;
+        }
+
+        // Проверяем наличие Telegram WebApp
+        if (!window.Telegram?.WebApp?.initDataUnsafe?.user) {
           throw new Error("Telegram user data not available");
         }
+
+        const user = window.Telegram.WebApp.initDataUnsafe.user;
         const telegramId = user.id.toString();
         
-        // Проверяем, зарегистрирован ли пользователь
+        // Проверяем существующего пользователя
         const response = await fetch(`${CONFIG.apiUrl}/user/${telegramId}`);
         
         if (response.status === 404) {
@@ -800,6 +856,25 @@
         console.error("Ошибка инициализации:", error);
         showError(error.message || "Ошибка подключения к серверу");
         showConnectionError(true);
+        
+        // Предлагаем тестовый режим
+        if (confirm("Ошибка подключения. Запустить в тестовом режиме?")) {
+          state.userId = "test_" + Math.random().toString(36).substr(2, 8);
+          state.balance = 0.5;
+          state.referralCode = "TEST" + Math.random().toString(36).substr(2, 6).toUpperCase();
+          state.adViews = 5;
+          state.totalViews = 50;
+          state.isTestMode = true;
+          
+          // Показываем баннер тестового режима
+          const banner = document.createElement('div');
+          banner.className = 'test-mode-banner';
+          banner.textContent = 'ТЕСТОВЫЙ РЕЖИМ | Данные не сохраняются';
+          document.body.prepend(banner);
+          
+          updateUI();
+          showConnectionError(false);
+        }
       }
     }
 
@@ -814,30 +889,46 @@
       btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
 
       try {
-        const url = new URL(`${CONFIG.apiUrl}/reward`);
-        url.searchParams.append('userid', state.userId);
-        url.searchParams.append('secret', CONFIG.secretKey);
+        if (state.isTestMode) {
+          // Тестовый режим - эмулируем ответ сервера
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          
+          state.balance += CONFIG.rewardPerAd;
+          state.adViews += 1;
+          state.totalViews += 1;
+          state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
+          
+          // Эмулируем бонус каждые 200 просмотров
+          let bonusReward = 0;
+          if (state.totalViews % CONFIG.bonusThreshold === 0) {
+            bonusReward = CONFIG.bonusAmount;
+            state.balance += bonusReward;
+          }
+          
+          updateUI();
+          showNotification(`+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!` + 
+            (bonusReward > 0 ? ` +$${bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!` : ''));
+        } else {
+          const url = new URL(`${CONFIG.apiUrl}/reward`);
+          url.searchParams.append('userid', state.userId);
+          url.searchParams.append('secret', CONFIG.secretKey);
 
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-          throw new Error("Ошибка при просмотре рекламы");
-        }
+          const response = await fetch(url);
+          
+          if (!response.ok) {
+            throw new Error("Ошибка при просмотре рекламы");
+          }
 
-        const result = await response.json();
-        state.balance = result.balance;
-        state.adViews = result.viewsToday;
-        state.totalViews = result.totalViews;
-        state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
-        
-        updateUI();
-        
-        // Показываем уведомление
-        let notification = `+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`;
-        if (result.bonusReward > 0) {
-          notification += ` +$${result.bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!`;
+          const result = await response.json();
+          state.balance = result.balance;
+          state.adViews = result.viewsToday;
+          state.totalViews = result.totalViews;
+          state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
+          
+          updateUI();
+          showNotification(`+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!` + 
+            (result.bonusReward > 0 ? ` +$${result.bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!` : ''));
         }
-        showNotification(notification);
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка при просмотре рекламы");
@@ -868,6 +959,17 @@
 
       if (amount > state.balance) {
         showError(`Недостаточно средств. Доступно: $${state.balance.toFixed(3)}`);
+        return;
+      }
+
+      if (state.isTestMode) {
+        // В тестовом режиме просто эмулируем вывод
+        state.balance -= amount;
+        updateUI();
+        showPage('main-page');
+        showNotification(`Тестовый вывод $${amount.toFixed(2)} на ${wallet}`);
+        document.getElementById('wallet').value = '';
+        document.getElementById('amount').value = '';
         return;
       }
 
@@ -915,6 +1017,39 @@
 
     async function loadTasks() {
       try {
+        if (state.isTestMode) {
+          // Тестовые задания
+          state.tasks = [
+            {
+              id: "test_task_1",
+              title: "Подпишитесь на канал",
+              reward: 0.01,
+              description: "Подпишитесь на наш Telegram канал и получите награду",
+              url: "https://t.me/example_channel",
+              cooldown: 10
+            },
+            {
+              id: "test_task_2",
+              title: "Вступите в чат",
+              reward: 0.02,
+              description: "Вступите в наш чат и получите награду",
+              url: "https://t.me/example_chat",
+              cooldown: 15
+            },
+            {
+              id: "system_ad_watching",
+              title: "Просмотр рекламы",
+              description: "Смотрите рекламные ролики и получайте вознаграждение",
+              reward: 0,
+              url: "#",
+              cooldown: 0,
+              is_system: true
+            }
+          ];
+          renderTasks();
+          return;
+        }
+
         const response = await fetch(`${CONFIG.apiUrl}/tasks`);
         if (!response.ok) {
           throw new Error("Ошибка загрузки заданий");
@@ -1036,6 +1171,19 @@
 
     async function completeTask(taskId) {
       try {
+        if (state.isTestMode) {
+          // В тестовом режиме просто добавляем награду
+          const task = state.tasks.find(t => t.id === taskId);
+          if (task) {
+            state.balance += task.reward;
+            state.completedTasks.push(taskId);
+            updateUI();
+            renderTasks();
+            showNotification(`Задание выполнено! +$${task.reward.toFixed(3)}`);
+          }
+          return;
+        }
+
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
           method: 'POST',
           headers: { 
@@ -1183,11 +1331,35 @@
       }
     }
 
-    async function init() {
+    function init() {
+      // Проверяем, что мы в Telegram WebView или разрешаем тестовый режим
+      const isTelegram = window.Telegram?.WebApp;
+      const urlParams = new URLSearchParams(window.location.search);
+      const allowTest = urlParams.has('test') || urlParams.has('test_user_id');
+      
+      if (!isTelegram && !allowTest) {
+        document.getElementById('splash-screen').innerHTML = `
+          <div style="text-align: center; color: white; padding: 20px;">
+            <h2>Это приложение работает только в Telegram</h2>
+            <p>Откройте его через бота</p>
+            <button onclick="location.href='?test=1'" 
+              style="background: white; color: #1a5c32; border: none; 
+              padding: 10px 20px; border-radius: 8px; margin-top: 20px;">
+              Тестовый режим
+            </button>
+          </div>
+        `;
+        return;
+      }
+
       setTimeout(() => {
         document.getElementById('splash-screen').style.opacity = '0';
         setTimeout(() => {
           document.getElementById('splash-screen').style.display = 'none';
+          
+          if (isTelegram) {
+            window.Telegram.WebApp.ready();
+          }
           
           document.getElementById('watch-ad-btn').addEventListener('click', startAd);
           document.getElementById('retry-btn').addEventListener('click', () => {
