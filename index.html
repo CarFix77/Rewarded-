@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AdRewards PRO</title>
   <style>
+    /* Все стили остаются без изменений */
     :root {
       --primary-color: #1a5c32;
       --primary-dark: #0f3d20;
@@ -733,55 +734,92 @@
       currentWithdrawalFilter: 'pending'
     };
 
-    // Проверка Telegram WebApp
+    // Проверка Telegram WebApp с обработкой ошибок
     function checkTelegramWebApp() {
-      if (window.Telegram?.WebApp) {
-        const tgWebApp = window.Telegram.WebApp;
-        tgWebApp.expand();
-        tgWebApp.enableClosingConfirmation();
-        return true;
-      }
-      return false;
-    }
-
-    // Получение данных пользователя из Telegram
-    function getTelegramUser() {
-      if (!window.Telegram?.WebApp) return null;
-      
-      // Пытаемся получить данные из initDataUnsafe
-      const user = window.Telegram.WebApp.initDataUnsafe?.user;
-      if (user && user.id) return user;
-      
-      // Альтернативный способ через initData
       try {
-        const initData = window.Telegram.WebApp.initData;
-        const params = new URLSearchParams(initData);
-        const userJson = params.get('user');
-        return userJson ? JSON.parse(userJson) : null;
+        if (window.Telegram?.WebApp) {
+          const tgWebApp = window.Telegram.WebApp;
+          tgWebApp.expand();
+          tgWebApp.enableClosingConfirmation();
+          return true;
+        }
+        return false;
       } catch (e) {
-        console.error("Error parsing Telegram user data:", e);
-        return null;
+        console.error("Ошибка инициализации Telegram WebApp:", e);
+        return false;
       }
     }
 
-    async function initUser() {
-      try {
-        // Проверяем, что мы в Telegram WebApp
+    // Гарантированное скрытие заставки
+    function hideSplashScreen() {
+      const splash = document.getElementById('splash-screen');
+      splash.style.opacity = '0';
+      setTimeout(() => {
+        splash.style.display = 'none';
+      }, 500);
+    }
+
+    // Показать сообщение для не-Telegram пользователей
+    function showNonTelegramMessage() {
+      document.getElementById('non-telegram-message').classList.remove('hidden');
+      document.getElementById('main-page').classList.add('hidden');
+    }
+
+    // Инициализация приложения
+    function initApp() {
+      // Настройка обработчиков событий
+      document.getElementById('watch-ad-btn').addEventListener('click', startAd);
+      document.getElementById('retry-btn').addEventListener('click', () => {
+        showConnectionError(false);
+        initUser();
+      });
+      
+      document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
+      
+      // Горячая клавиша для админ-панели
+      document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.altKey && e.key === 'a') {
+          showAdminLogin();
+        }
+      });
+
+      // Инициализация пользователя
+      initUser();
+    }
+
+    // Основная функция инициализации
+    function initialize() {
+      // Всегда скрываем заставку через 3 секунды максимум
+      const splashTimeout = setTimeout(() => {
+        hideSplashScreen();
         if (!checkTelegramWebApp()) {
           showNonTelegramMessage();
           return;
         }
-        
+        initApp();
+      }, 3000);
+
+      // Если Telegram WebApp доступен сразу, отменяем таймаут
+      if (checkTelegramWebApp()) {
+        clearTimeout(splashTimeout);
+        hideSplashScreen();
+        initApp();
+      }
+    }
+
+    // Остальные функции (initUser, startAd, submitWithdrawal и т.д.) остаются без изменений
+    async function initUser() {
+      try {
         const tgWebApp = window.Telegram.WebApp;
-        const user = getTelegramUser();
+        const user = tgWebApp.initDataUnsafe?.user;
         
         if (!user || !user.id) {
-          throw new Error("Не удалось получить данные пользователя Telegram");
+          throw new Error("Не удалось получить данные пользователя");
         }
 
         const telegramId = user.id.toString();
         const startParam = tgWebApp.initDataUnsafe?.start_param || 
-                         new URLSearchParams(window.location.search).get('startapp');
+                          new URLSearchParams(window.location.search).get('startapp');
         
         // Проверяем существующего пользователя
         const response = await fetch(`${CONFIG.apiUrl}/user/${telegramId}`);
@@ -842,11 +880,6 @@
         showError(error.message || "Ошибка подключения к серверу");
         showConnectionError(true);
       }
-    }
-
-    function showNonTelegramMessage() {
-      document.getElementById('non-telegram-message').classList.remove('hidden');
-      document.getElementById('main-page').classList.add('hidden');
     }
 
     function generateReferralCode() {
@@ -1246,47 +1279,8 @@
       }
     }
 
-    function init() {
-      // Сначала проверяем Telegram WebApp
-      if (!checkTelegramWebApp()) {
-        showNonTelegramMessage();
-        return;
-      }
-
-      // Инициализируем WebApp
-      const tgWebApp = window.Telegram.WebApp;
-      tgWebApp.expand();
-      tgWebApp.enableClosingConfirmation();
-
-      // Запускаем анимацию загрузки
-      setTimeout(() => {
-        document.getElementById('splash-screen').style.opacity = '0';
-        setTimeout(() => {
-          document.getElementById('splash-screen').style.display = 'none';
-          
-          // Инициализируем приложение
-          document.getElementById('watch-ad-btn').addEventListener('click', startAd);
-          document.getElementById('retry-btn').addEventListener('click', () => {
-            showConnectionError(false);
-            initUser();
-          });
-          
-          document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
-          
-          // Горячая клавиша для админ-панели
-          document.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.altKey && e.key === 'a') {
-              showAdminLogin();
-            }
-          });
-
-          initUser();
-        }, 500);
-      }, 1500);
-    }
-
-    // Запускаем приложение после загрузки DOM
-    document.addEventListener('DOMContentLoaded', init);
+    // Запуск приложения при загрузке страницы
+    document.addEventListener('DOMContentLoaded', initialize);
   </script>
 </body>
 </html>
