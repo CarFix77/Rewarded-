@@ -1,6 +1,7 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { Bot } from "https://deno.land/x/grammy/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -10,8 +11,8 @@ const CONFIG = {
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
-  BONUS_THRESHOLD: 200,    // Каждые 200 просмотров
-  BONUS_AMOUNT: 0.005      // Награда за каждые 200 просмотров
+  BONUS_THRESHOLD: 200,
+  BONUS_AMOUNT: 0.005
 };
 
 const supabase = createClient(
@@ -21,7 +22,9 @@ const supabase = createClient(
 
 const app = new Application();
 const router = new Router();
+const bot = new Bot("8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4");
 
+// Middleware
 app.use(async (ctx, next) => {
   try {
     await next();
@@ -105,8 +108,54 @@ async function cleanupOldData() {
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 cleanupOldData();
 
-// ================== ROUTES ================== //
+// Telegram Bot - только команда /start
+bot.command("start", async (ctx) => {
+  const userId = `tg_${ctx.from.id}`;
+  const userRefCode = generateId().toString();
 
+  const { data: existingUser } = await supabase
+    .from("users")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  if (!existingUser) {
+    await supabase.from("users").insert({
+      user_id: userId,
+      balance: 0,
+      total_views: 0,
+      ref_code: userRefCode,
+      ref_count: 0,
+      ref_earnings: 0,
+      created_at: new Date().toISOString()
+    });
+  }
+
+  await ctx.reply(`👋 Добро пожаловать! Используйте кнопку ниже для доступа к приложению`, {
+    reply_markup: {
+      inline_keyboard: [
+        [{
+          text: "Открыть приложение",
+          web_app: { url: `https://ваш-сайт.com?userId=${userId}` }
+        }]
+      ]
+    }
+  });
+});
+
+// Webhook handler
+router.post("/telegram-webhook", async (ctx) => {
+  try {
+    const update = await ctx.request.body().value;
+    await bot.handleUpdate(update);
+    ctx.response.status = 200;
+  } catch (err) {
+    console.error("Webhook error:", err);
+    ctx.response.status = 500;
+  }
+});
+
+// Original API endpoints (полностью сохранены)
 router.post("/register", async (ctx) => {
   const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
@@ -203,7 +252,6 @@ router.all("/reward", async (ctx) => {
     return;
   }
 
-  // Рассчитываем бонус за накопленные просмотры
   const newTotalViews = (user.total_views || 0) + 1;
   let bonusReward = 0;
   
@@ -215,7 +263,6 @@ router.all("/reward", async (ctx) => {
   const totalReward = CONFIG.REWARD_PER_AD + bonusReward;
   const newBalance = user.balance + totalReward;
   
-  // Обновляем данные
   const { error: viewError } = await supabase
     .from("views")
     .upsert({
@@ -355,7 +402,6 @@ router.get("/tasks", async (ctx) => {
     return;
   }
 
-  // Добавляем системное задание для просмотров
   const adWatchTask = {
     task_id: "system_ad_watching",
     title: "Просмотр рекламы",
@@ -378,7 +424,6 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   
   console.log(`Complete task request: user=${userId}, task=${taskId}`);
   
-  // 1. Verify user exists
   const { data: user, error: userError } = await supabase
     .from("users")
     .select("*")
@@ -399,7 +444,6 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     return;
   }
   
-  // 2. Try to record task completion (will fail if already completed)
   try {
     const { error } = await supabase
       .from("completed_tasks")
@@ -410,7 +454,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
       });
 
     if (error) {
-      if (error.code === "23505") { // Unique violation
+      if (error.code === "23505") {
         console.log("Task already completed:", taskId);
         ctx.response.status = 400;
         ctx.response.body = { success: false, error: "Task already completed" };
@@ -428,10 +472,8 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     return;
   }
   
-  // 3. Find task in database
   let task = null;
   
-  // Check main tasks
   const { data: taskData } = await supabase
     .from("tasks")
     .select("*")
@@ -441,7 +483,6 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   if (taskData) {
     task = taskData;
   } 
-  // Check custom tasks
   else {
     const { data: customTaskData } = await supabase
       .from("custom_tasks")
@@ -461,7 +502,6 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     return;
   }
   
-  // 4. Award task reward
   const newBalance = user.balance + task.reward;
   const { error: balanceError } = await supabase
     .from("users")
@@ -484,8 +524,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   };
 });
 
-// ================== ADMIN ROUTES ================== //
-
+// Admin routes (полностью сохранены)
 router.post("/admin/login", async (ctx) => {
   const { password } = ctx.state.body || {};
   if (password === CONFIG.ADMIN_PASSWORD) {
@@ -646,14 +685,13 @@ router.delete("/admin/custom-tasks/:id", async (ctx) => {
   ctx.response.body = { success: true };
 });
 
-// ================== SERVER SETUP ================== //
-
+// Server setup
 router.get("/", (ctx) => {
   ctx.response.body = {
     success: true,
     status: "OK",
     version: "1.0",
-    message: "Ad Rewards Server with Supabase"
+    message: "Ad Rewards Server with Telegram Bot"
   };
 });
 
@@ -667,4 +705,13 @@ app.use((ctx) => {
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-await app.listen({ port })
+
+// Установка вебхука и запуск сервера
+bot.api.setWebHook(`https://ваш-сервер.deno.dev/telegram-webhook`)
+  .then(() => console.log("Telegram webhook установлен"))
+  .catch(console.error);
+
+await Promise.all([
+  app.listen({ port }),
+  bot.start()
+]);
