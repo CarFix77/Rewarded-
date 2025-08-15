@@ -11,8 +11,7 @@ const CONFIG = {
   REFERRAL_PERCENT: 0.15,
   ADMIN_PASSWORD: "8223Nn8223",
   BONUS_THRESHOLD: 200,    // Каждые 200 просмотров
-  BONUS_AMOUNT: 0.005,     // Награда за каждые 200 просмотров
-  BOT_TOKEN: "8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4" // Ваш токен бота
+  BONUS_AMOUNT: 0.005      // Награда за каждые 200 просмотров
 };
 
 const supabase = createClient(
@@ -106,180 +105,24 @@ async function cleanupOldData() {
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 cleanupOldData();
 
-// ================== TELEGRAM AUTHENTICATION ================== //
-
-router.post("/telegram-auth", async (ctx) => {
-  const { initData } = ctx.state.body || {};
-  
-  if (!initData) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "initData is required" };
-    return;
-  }
-
-  // Валидация данных Telegram
-  const isValid = await validateTelegramData(initData, CONFIG.BOT_TOKEN);
-  if (!isValid) {
-    ctx.response.status = 401;
-    ctx.response.body = { success: false, error: "Invalid Telegram data" };
-    return;
-  }
-
-  // Парсинг данных пользователя
-  const params = new URLSearchParams(initData);
-  const userJson = params.get('user');
-  if (!userJson) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "User data not found" };
-    return;
-  }
-
-  let userData;
-  try {
-    userData = JSON.parse(userJson);
-  } catch (e) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Invalid user data" };
-    return;
-  }
-
-  const telegramId = userData.id;
-  if (!telegramId) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Telegram ID not found" };
-    return;
-  }
-
-  // Поиск или создание пользователя
-  const { data: existingUser, error: userError } = await supabase
-    .from("users")
-    .select("*")
-    .eq("telegram_id", telegramId)
-    .single();
-
-  let userId;
-  if (userError || !existingUser) {
-    // Создаем нового пользователя
-    userId = `user_${generateId()}`;
-    const refCode = generateId().toString();
-    
-    const { error: insertError } = await supabase
-      .from("users")
-      .insert({
-        user_id: userId,
-        telegram_id: telegramId,
-        telegram_username: userData.username || "",
-        first_name: userData.first_name || "",
-        last_name: userData.last_name || "",
-        telegram_data: userData,
-        balance: 0,
-        total_views: 0,
-        ref_code: refCode,
-        ref_count: 0,
-        ref_earnings: 0,
-        created_at: new Date().toISOString()
-      });
-
-    if (insertError) {
-      console.error("Error creating user:", insertError);
-      ctx.response.status = 500;
-      ctx.response.body = { success: false, error: "Database error" };
-      return;
-    }
-  } else {
-    userId = existingUser.user_id;
-  }
-
-  // Обновляем данные пользователя
-  await supabase
-    .from("users")
-    .update({
-      telegram_username: userData.username || "",
-      first_name: userData.first_name || "",
-      last_name: userData.last_name || "",
-      telegram_data: userData
-    })
-    .eq("user_id", userId);
-
-  ctx.response.body = {
-    success: true,
-    userId,
-    telegramId,
-    userData
-  };
-});
-
-// Функция валидации данных Telegram
-async function validateTelegramData(initData: string, botToken: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const params = new URLSearchParams(initData);
-  const hash = params.get('hash');
-  
-  if (!hash) return false;
-  params.delete('hash');
-  
-  // Сортировка параметров
-  const sortedKeys = Array.from(params.keys()).sort();
-  const dataCheckString = sortedKeys.map(k => `${k}=${params.get(k)}`).join('\n');
-  
-  // Генерация секретного ключа
-  const secretKey = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode("WebAppData"),
-    { name: "HMAC", hash: "SHA-256" },
-    true,
-    ["sign"]
-  );
-  
-  const secret = new Uint8Array(
-    await crypto.subtle.sign("HMAC", secretKey, encoder.encode(botToken))
-  );
-  
-  // Проверка подписи
-  const signingKey = await crypto.subtle.importKey(
-    "raw",
-    secret,
-    { name: "HMAC", hash: "SHA-256" },
-    true,
-    ["sign"]
-  );
-  
-  const signature = new Uint8Array(
-    await crypto.subtle.sign("HMAC", signingKey, encoder.encode(dataCheckString))
-  );
-  
-  const signatureHex = Array.from(signature)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-  
-  return signatureHex === hash;
-}
-
 // ================== ROUTES ================== //
 
 router.post("/register", async (ctx) => {
-  const { refCode, telegramId } = ctx.state.body || {};
+  const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
   const userRefCode = generateId().toString();
 
-  const userData = {
-    user_id: userId,
-    balance: 0,
-    total_views: 0,
-    ref_code: userRefCode,
-    ref_count: 0,
-    ref_earnings: 0,
-    created_at: new Date().toISOString()
-  };
-
-  // Если есть Telegram ID, добавляем его
-  if (telegramId) {
-    userData.telegram_id = telegramId;
-  }
-
   const { error } = await supabase
     .from("users")
-    .insert(userData);
+    .insert({
+      user_id: userId,
+      balance: 0,
+      total_views: 0,
+      ref_code: userRefCode,
+      ref_count: 0,
+      ref_earnings: 0,
+      created_at: new Date().toISOString()
+    });
 
   if (error) {
     ctx.response.status = 500;
@@ -318,28 +161,14 @@ router.post("/register", async (ctx) => {
 
 router.all("/reward", async (ctx) => {
   let userId, secret;
-  const body = ctx.state.body || {};
   
   if (ctx.request.method === "POST") {
+    const body = ctx.state.body || {};
     userId = body.userId || body.userid;
     secret = body.secret;
   } else {
-    const urlParams = ctx.request.url.searchParams;
-    userId = urlParams.get("userid");
-    secret = urlParams.get("secret");
-  }
-
-  // Если передан telegramId вместо userId
-  if (!userId && body.telegramId) {
-    const { data: user } = await supabase
-      .from("users")
-      .select("user_id")
-      .eq("telegram_id", body.telegramId)
-      .single();
-      
-    if (user) {
-      userId = user.user_id;
-    }
+    userId = ctx.request.url.searchParams.get("userid");
+    secret = ctx.request.url.searchParams.get("secret");
   }
 
   if (!userId) {
@@ -444,64 +273,6 @@ router.get("/user/:userId", async (ctx) => {
     ...user,
     completedTasks: completedTasks?.map(t => t.task_id) || []
   };
-});
-
-router.get("/user-by-telegram/:telegramId", async (ctx) => {
-  const telegramId = ctx.params.telegramId;
-  
-  const { data: user, error } = await supabase
-    .from("users")
-    .select("user_id, balance, total_views, ref_code")
-    .eq("telegram_id", telegramId)
-    .single();
-  
-  if (error || !user) {
-    ctx.response.status = 404;
-    ctx.response.body = { success: false, error: "User not found" };
-    return;
-  }
-  
-  ctx.response.body = {
-    success: true,
-    userId: user.user_id,
-    balance: user.balance,
-    totalViews: user.total_views,
-    refCode: user.ref_code
-  };
-});
-
-router.post("/update-telegram-data", async (ctx) => {
-  const { userId, userData } = ctx.state.body || {};
-  
-  if (!userId || !userData) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "Missing parameters" };
-    return;
-  }
-
-  const updateData = {
-    telegram_username: userData.username || "",
-    first_name: userData.first_name || "",
-    last_name: userData.last_name || "",
-    telegram_data: userData
-  };
-
-  if (userData.id) {
-    updateData.telegram_id = userData.id;
-  }
-
-  const { error } = await supabase
-    .from("users")
-    .update(updateData)
-    .eq("user_id", userId);
-
-  if (error) {
-    ctx.response.status = 500;
-    ctx.response.body = { success: false, error: "Update failed" };
-    return;
-  }
-
-  ctx.response.body = { success: true };
 });
 
 router.get("/views/:userId/:date", async (ctx) => {
@@ -882,7 +653,7 @@ router.get("/", (ctx) => {
     success: true,
     status: "OK",
     version: "1.0",
-    message: "Ad Rewards Server with Supabase and Telegram"
+    message: "Ad Rewards Server with Supabase"
   };
 });
 
@@ -896,4 +667,4 @@ app.use((ctx) => {
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-await app.listen({ port });
+await app.listen({ port })
