@@ -1,7 +1,7 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { Bot } from "https://deno.land/x/grammy/mod.ts";
+import { Bot } from "https://deno.land/x/grammy@v1.20.3/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
@@ -707,11 +707,13 @@ const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 
 // Установка вебхука и запуск сервера
-bot.api.setWebHook(`https://ваш-сервер.deno.dev/telegram-webhook`)
+const webhookUrl = Deno.env.get("WEBHOOK_URL") || "https://your-server.deno.dev";
+bot.api.setWebhook(`${webhookUrl}/telegram-webhook`)
   .then(() => console.log("Telegram webhook установлен"))
-  .catch(console.error);
+  .catch(err => console.error("Ошибка установки webhook:", err));
 
-await Promise.all([
-  app.listen({ port }),
-  bot.start()
-]);
+// Запуск сервера и бота
+const serverPromise = app.listen({ port });
+const botPromise = bot.start();
+
+await Promise.all([serverPromise, botPromise]);
