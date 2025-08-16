@@ -14,7 +14,7 @@ const CONFIG = {
   ADMIN_PASSWORD: Deno.env.get("ADMIN_PASSWORD") || "8223Nn8223",
   BONUS_THRESHOLD: 200,
   BONUS_AMOUNT: 0.005,
-  FRONTEND_URL: "https://carfix77.github.io/Rewarded-"
+  FRONTEND_URL: "https://carfix77.github.io"
 };
 
 // Инициализация Supabase
@@ -27,15 +27,24 @@ const app = new Application();
 const router = new Router();
 const bot = new Bot(Deno.env.get("BOT_TOKEN") || "8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4");
 
-// Middleware CORS для фронтенда
+// Middleware
+app.use(async (ctx, next) => {
+  try {
+    await next();
+  } catch (err) {
+    console.error("Error:", err);
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: err.message };
+  }
+});
+
 app.use(oakCors({
-  origin: CONFIG.FRONTEND_URL,
+  origin: [CONFIG.FRONTEND_URL, "https://carfix77-rewarded-34.deno.dev"],
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
 }));
 
-// Обработка тела запроса
 app.use(async (ctx, next) => {
   if (ctx.request.hasBody) {
     try {
@@ -50,9 +59,36 @@ app.use(async (ctx, next) => {
   await next();
 });
 
-// Генерация ID
+// Вспомогательные функции
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
+}
+
+async function cleanupOldData() {
+  try {
+    const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
+    await supabase.from("views").delete().lt("date", weekAgo);
+    
+    const { data: inactiveUsers } = await supabase
+      .from("users")
+      .select("user_id")
+      .lt("created_at", new Date(Date.now() - 30 * 864e5).toISOString())
+      .lt("balance", 0.01);
+
+    if (inactiveUsers?.length) {
+      const ids = inactiveUsers.map(u => u.user_id);
+      await supabase.from("views").delete().in("user_id", ids);
+      await supabase.from("users").delete().in("user_id", ids);
+    }
+
+    await supabase
+      .from("withdrawals")
+      .delete()
+      .lt("date", weekAgo)
+      .neq("status", "pending");
+  } catch (error) {
+    console.error("Cleanup failed:", error);
+  }
 }
 
 // Telegram Bot
@@ -60,13 +96,13 @@ bot.command("start", async (ctx) => {
   const userId = `tg_${ctx.from.id}`;
   const userRefCode = generateId().toString();
 
-  const { data: existingUser } = await supabase
+  const { data: user } = await supabase
     .from("users")
     .select("*")
     .eq("user_id", userId)
     .single();
 
-  if (!existingUser) {
+  if (!user) {
     await supabase.from("users").insert({
       user_id: userId,
       balance: 0,
@@ -78,18 +114,18 @@ bot.command("start", async (ctx) => {
     });
   }
 
-  await ctx.reply(`👋 Добро пожаловать!`, {
+  await ctx.reply("👋 Добро пожаловать! Откройте приложение:", {
     reply_markup: {
       inline_keyboard: [[{
-        text: "Открыть приложение",
-        web_app: { url: `${CONFIG.FRONTEND_URL}?userId=${userId}` }
+        text: "Открыть Rewarded",
+        web_app: { url: `${CONFIG.FRONTEND_URL}/Rewarded-/?userId=${userId}` }
       }]]
     }
   });
 });
 
 // API Endpoints
-router.post("/api/register", async (ctx) => {
+router.post("/register", async (ctx) => {
   const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
   const userRefCode = generateId().toString();
@@ -134,12 +170,21 @@ router.post("/api/register", async (ctx) => {
     success: true,
     userId,
     refCode: userRefCode,
-    refLink: `${CONFIG.FRONTEND_URL}?ref=${userRefCode}`
+    refLink: `${CONFIG.FRONTEND_URL}/Rewarded-/?ref=${userRefCode}`
   };
 });
 
-router.post("/api/reward", async (ctx) => {
-  const { userId, secret } = ctx.state.body || {};
+router.all("/reward", async (ctx) => {
+  let userId, secret;
+  
+  if (ctx.request.method === "POST") {
+    const body = ctx.state.body || {};
+    userId = body.userId || body.userid;
+    secret = body.secret;
+  } else {
+    userId = ctx.request.url.searchParams.get("userid");
+    secret = ctx.request.url.searchParams.get("secret");
+  }
 
   if (!userId) {
     ctx.response.status = 400;
@@ -147,7 +192,7 @@ router.post("/api/reward", async (ctx) => {
     return;
   }
 
-  if (secret !== CONFIG.SECRET_KEY) {
+  if (secret !== CONFIG.SECRET_KEY && secret !== CONFIG.WEBHOOK_SECRET) {
     ctx.response.status = 401;
     ctx.response.body = { success: false, error: "Invalid secret" };
     return;
@@ -155,7 +200,7 @@ router.post("/api/reward", async (ctx) => {
 
   const today = new Date().toISOString().split("T")[0];
   
-  const [{ data: user, error: userError }, { data: viewsData }] = await Promise.all([
+  const [{ data: user, error: userError }, { data: viewsData, error: viewsError }] = await Promise.all([
     supabase.from("users").select("*").eq("user_id", userId).single(),
     supabase.from("views").select("count").eq("user_id", userId).eq("date", today).single()
   ]);
@@ -183,13 +228,15 @@ router.post("/api/reward", async (ctx) => {
   const totalReward = CONFIG.REWARD_PER_AD + bonusReward;
   const newBalance = user.balance + totalReward;
   
-  await supabase.from("views").upsert({
-    user_id: userId,
-    date: today,
-    count: dailyViews + 1
-  }, { onConflict: "user_id,date" });
+  const { error: viewError } = await supabase
+    .from("views")
+    .upsert({
+      user_id: userId,
+      date: today,
+      count: dailyViews + 1
+    }, { onConflict: "user_id,date" });
 
-  await supabase
+  const { error: userUpdateError } = await supabase
     .from("users")
     .update({ 
       balance: newBalance,
@@ -197,25 +244,416 @@ router.post("/api/reward", async (ctx) => {
     })
     .eq("user_id", userId);
 
+  if (viewError || userUpdateError) {
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Database update failed" };
+    return;
+  }
+
   ctx.response.body = {
     success: true,
     reward: totalReward,
+    baseReward: CONFIG.REWARD_PER_AD,
+    bonusReward: bonusReward,
     balance: newBalance,
     viewsToday: dailyViews + 1,
     totalViews: newTotalViews
   };
 });
 
-// Добавьте остальные endpoint'ы аналогично
+router.get("/user/:userId", async (ctx) => {
+  const userId = ctx.params.userId;
+  const { data: user, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+  
+  if (error || !user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+  
+  const { data: completedTasks } = await supabase
+    .from("completed_tasks")
+    .select("task_id")
+    .eq("user_id", userId);
+  
+  ctx.response.body = {
+    success: true,
+    ...user,
+    completedTasks: completedTasks?.map(t => t.task_id) || []
+  };
+});
 
-// Запуск сервера
+router.get("/views/:userId/:date", async (ctx) => {
+  const { userId, date } = ctx.params;
+  const { data: view, error } = await supabase
+    .from("views")
+    .select("count")
+    .eq("user_id", userId)
+    .eq("date", date)
+    .single();
+
+  ctx.response.body = { 
+    success: true, 
+    views: view?.count || 0 
+  };
+});
+
+router.post("/withdraw", async (ctx) => {
+  const { userId, wallet, amount } = ctx.state.body || {};
+  
+  if (!userId || !wallet || !amount) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Missing parameters" };
+    return;
+  }
+
+  const { data: user, error: userError } = await supabase
+    .from("users")
+    .select("balance")
+    .eq("user_id", userId)
+    .single();
+
+  if (userError || !user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+
+  if (amount < CONFIG.MIN_WITHDRAW || user.balance < amount) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Invalid withdrawal amount" };
+    return;
+  }
+
+  const withdrawId = `wd_${generateId()}`;
+  const { error: withdrawError } = await supabase.from("withdrawals").insert({
+    withdrawal_id: withdrawId,
+    user_id: userId,
+    amount,
+    wallet,
+    status: "pending"
+  });
+
+  if (withdrawError) {
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Withdrawal creation failed" };
+    return;
+  }
+
+  await supabase
+    .from("users")
+    .update({ balance: user.balance - amount })
+    .eq("user_id", userId);
+
+  ctx.response.body = { success: true, withdrawId };
+});
+
+router.get("/tasks", async (ctx) => {
+  const { data: tasks, error: tasksError } = await supabase
+    .from("tasks")
+    .select("*");
+  
+  const { data: customTasks, error: customTasksError } = await supabase
+    .from("custom_tasks")
+    .select("*");
+
+  if (tasksError || customTasksError) {
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Database error" };
+    return;
+  }
+
+  const adWatchTask = {
+    task_id: "system_ad_watching",
+    title: "Просмотр рекламы",
+    description: "Смотрите рекламные ролики и получайте вознаграждение",
+    reward: 0,
+    url: "#",
+    cooldown: 0,
+    is_system: true
+  };
+
+  ctx.response.body = {
+    success: true,
+    tasks: [...(tasks || []), ...(customTasks || []), adWatchTask]
+  };
+});
+
+router.post("/user/:userId/complete-task", async (ctx) => {
+  const userId = ctx.params.userId;
+  const { taskId } = ctx.state.body || {};
+  
+  const { data: user, error: userError } = await supabase
+    .from("users")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+  
+  if (userError || !user) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "User not found" };
+    return;
+  }
+  
+  if (!taskId) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "Task ID is required" };
+    return;
+  }
+  
+  try {
+    const { error } = await supabase
+      .from("completed_tasks")
+      .insert({
+        user_id: userId,
+        task_id: taskId,
+        completed_at: new Date().toISOString()
+      });
+
+    if (error?.code === "23505") {
+      ctx.response.status = 400;
+      ctx.response.body = { success: false, error: "Task already completed" };
+      return;
+    } else if (error) throw error;
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { 
+      success: false, 
+      error: "Failed to record task completion" 
+    };
+    return;
+  }
+  
+  let task = null;
+  const { data: taskData } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("task_id", taskId)
+    .maybeSingle();
+
+  if (!taskData) {
+    const { data: customTaskData } = await supabase
+      .from("custom_tasks")
+      .select("*")
+      .eq("task_id", taskId)
+      .maybeSingle();
+    task = customTaskData;
+  } else {
+    task = taskData;
+  }
+  
+  if (!task) {
+    ctx.response.status = 404;
+    ctx.response.body = { success: false, error: "Task not found" };
+    return;
+  }
+  
+  const newBalance = user.balance + task.reward;
+  const { error: balanceError } = await supabase
+    .from("users")
+    .update({ balance: newBalance })
+    .eq("user_id", userId);
+
+  if (balanceError) {
+    ctx.response.status = 500;
+    ctx.response.body = { success: false, error: "Balance update failed" };
+    return;
+  }
+  
+  ctx.response.body = {
+    success: true,
+    balance: newBalance,
+    reward: task.reward
+  };
+});
+
+// Admin Endpoints
+router.post("/admin/login", async (ctx) => {
+  const { password } = ctx.state.body || {};
+  if (password === CONFIG.ADMIN_PASSWORD) {
+    ctx.response.body = { success: true, token: "admin_" + generateId() };
+  } else {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Wrong password" };
+  }
+});
+
+router.get("/admin/withdrawals", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { data: withdrawals, error } = await supabase
+    .from("withdrawals")
+    .select("*")
+    .order("date", { ascending: false });
+
+  ctx.response.body = { success: !error, withdrawals: withdrawals || [] };
+});
+
+router.post("/admin/withdrawals/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { status } = ctx.state.body || {};
+  await supabase
+    .from("withdrawals")
+    .update({
+      status,
+      processed_at: new Date().toISOString()
+    })
+    .eq("withdrawal_id", ctx.params.id);
+
+  ctx.response.body = { success: true };
+});
+
+router.get("/admin/tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { data: tasks, error } = await supabase
+    .from("tasks")
+    .select("*");
+
+  ctx.response.body = { success: !error, tasks: tasks || [] };
+});
+
+router.post("/admin/tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const taskId = `task_${generateId()}`;
+  
+  await supabase
+    .from("tasks")
+    .insert({
+      task_id: taskId,
+      title,
+      reward: parseFloat(reward),
+      description,
+      url,
+      cooldown: parseInt(cooldown) || 10
+    });
+  
+  ctx.response.body = { success: true, taskId };
+});
+
+router.delete("/admin/tasks/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  await supabase
+    .from("tasks")
+    .delete()
+    .eq("task_id", ctx.params.id);
+
+  ctx.response.body = { success: true };
+});
+
+router.get("/admin/custom-tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { data: tasks, error } = await supabase
+    .from("custom_tasks")
+    .select("*");
+
+  ctx.response.body = { success: !error, tasks: tasks || [] };
+});
+
+router.post("/admin/custom-tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const taskId = `custom_${generateId()}`;
+  
+  await supabase
+    .from("custom_tasks")
+    .insert({
+      task_id: taskId,
+      title,
+      reward: parseFloat(reward),
+      description,
+      url,
+      cooldown: parseInt(cooldown) || 10
+    });
+  
+  ctx.response.body = { success: true, taskId };
+});
+
+router.delete("/admin/custom-tasks/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  await supabase
+    .from("custom_tasks")
+    .delete()
+    .eq("task_id", ctx.params.id);
+
+  ctx.response.body = { success: true };
+});
+
+// Server Initialization
 const port = parseInt(Deno.env.get("PORT") || "8000");
-console.log(`Server running on port ${port}`);
+const WEBHOOK_URL = `${CONFIG.FRONTEND_URL}/telegram-webhook`;
 
+// Setup cleanup job
+setInterval(cleanupOldData, 864e5);
+cleanupOldData();
+
+// Configure webhook
+try {
+  await bot.api.setWebhook(WEBHOOK_URL);
+  console.log(`Webhook configured for ${WEBHOOK_URL}`);
+} catch (err) {
+  console.error("Webhook setup failed:", err);
+}
+
+// Start server
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-await Promise.all([
-  app.listen({ port }),
-  bot.start()
-]);
+app.use((ctx) => {
+  ctx.response.status = 404;
+  ctx.response.body = { success: false, error: "Not Found" };
+});
+
+console.log(`Server running on port ${port}`);
+await app.listen({ port });
