@@ -3,29 +3,29 @@ import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { Bot } from "https://deno.land/x/grammy@v1.20.3/mod.ts";
 
-// Конфигурация
+// Конфигурация с вашим URL
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
-  SECRET_KEY: Deno.env.get("SECRET_KEY") || "wagner46375",
-  WEBHOOK_SECRET: Deno.env.get("WEBHOOK_SECRET") || "wagner1080",
+  SECRET_KEY: "wagner46375",
+  WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
   REFERRAL_PERCENT: 0.15,
-  ADMIN_PASSWORD: Deno.env.get("ADMIN_PASSWORD") || "8223Nn8223",
+  ADMIN_PASSWORD: "8223Nn8223",
   BONUS_THRESHOLD: 200,
   BONUS_AMOUNT: 0.005,
-  FRONTEND_URL: "https://carfix77.github.io/Rewarded-"
+  FRONTEND_URL: "https://carfix77.github.io/Rewarded-" // Ваш URL
 };
 
 // Инициализация клиентов
 const supabase = createClient(
-  Deno.env.get("SUPABASE_URL") || "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
-  Deno.env.get("SUPABASE_KEY") || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
 );
 
 const app = new Application();
 const router = new Router();
-const bot = new Bot(Deno.env.get("BOT_TOKEN") || "8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4");
+const bot = new Bot("8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4");
 
 // Middleware
 app.use(async (ctx, next) => {
@@ -117,13 +117,13 @@ bot.command("start", async (ctx) => {
     reply_markup: {
       inline_keyboard: [[{
         text: "Открыть Rewarded",
-        web_app: { url: `${CONFIG.FRONTEND_URL}?userId=${userId}` }
+        web_app: { url: `${CONFIG.FRONTEND_URL}?userId=${userId}` } // Ваш URL
       }]]
     }
   });
 });
 
-// API Endpoints
+// API Endpoints (полностью сохранены)
 router.post("/register", async (ctx) => {
   const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
@@ -511,6 +511,118 @@ router.post("/admin/withdrawals/:id", async (ctx) => {
   ctx.response.body = { success: true };
 });
 
+router.get("/admin/tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { data: tasks, error } = await supabase
+    .from("tasks")
+    .select("*");
+
+  ctx.response.body = { success: !error, tasks: tasks || [] };
+});
+
+router.post("/admin/tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const taskId = `task_${generateId()}`;
+  
+  await supabase
+    .from("tasks")
+    .insert({
+      task_id: taskId,
+      title,
+      reward: parseFloat(reward),
+      description,
+      url,
+      cooldown: parseInt(cooldown) || 10
+    });
+  
+  ctx.response.body = { success: true, taskId };
+});
+
+router.delete("/admin/tasks/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  await supabase
+    .from("tasks")
+    .delete()
+    .eq("task_id", ctx.params.id);
+
+  ctx.response.body = { success: true };
+});
+
+router.get("/admin/custom-tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { data: tasks, error } = await supabase
+    .from("custom_tasks")
+    .select("*");
+
+  ctx.response.body = { success: !error, tasks: tasks || [] };
+});
+
+router.post("/admin/custom-tasks", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  const { title, reward, description, url, cooldown } = ctx.state.body || {};
+  const taskId = `custom_${generateId()}`;
+  
+  await supabase
+    .from("custom_tasks")
+    .insert({
+      task_id: taskId,
+      title,
+      reward: parseFloat(reward),
+      description,
+      url,
+      cooldown: parseInt(cooldown) || 10
+    });
+  
+  ctx.response.body = { success: true, taskId };
+});
+
+router.delete("/admin/custom-tasks/:id", async (ctx) => {
+  const authHeader = ctx.request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    ctx.response.status = 401;
+    ctx.response.body = { success: false, error: "Unauthorized" };
+    return;
+  }
+
+  await supabase
+    .from("custom_tasks")
+    .delete()
+    .eq("task_id", ctx.params.id);
+
+  ctx.response.body = { success: true };
+});
+
 // Server Initialization
 const port = parseInt(Deno.env.get("PORT") || "8000");
 const WEBHOOK_URL = `${CONFIG.FRONTEND_URL}/telegram-webhook`;
@@ -519,17 +631,12 @@ const WEBHOOK_URL = `${CONFIG.FRONTEND_URL}/telegram-webhook`;
 setInterval(cleanupOldData, 864e5);
 cleanupOldData();
 
-// Configure webhook in production
-if (Deno.env.get("DENO_ENV") === "production") {
-  try {
-    await bot.api.setWebhook(WEBHOOK_URL);
-    console.log(`Webhook configured for ${WEBHOOK_URL}`);
-  } catch (err) {
-    console.error("Webhook setup failed:", err);
-  }
-} else {
-  bot.start();
-  console.log("Bot running in polling mode");
+// Configure webhook
+try {
+  await bot.api.setWebhook(WEBHOOK_URL);
+  console.log(`Webhook configured for ${WEBHOOK_URL}`);
+} catch (err) {
+  console.error("Webhook setup failed:", err);
 }
 
 // Start server
