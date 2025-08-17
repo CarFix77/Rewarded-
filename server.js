@@ -108,7 +108,7 @@ async function cleanupOldData() {
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 cleanupOldData();
 
-// Telegram Bot - только команда /start
+// Telegram Bot
 bot.command("start", async (ctx) => {
   const userId = `tg_${ctx.from.id}`;
   const userRefCode = generateId().toString();
@@ -155,7 +155,7 @@ router.post("/telegram-webhook", async (ctx) => {
   }
 });
 
-// Original API endpoints (полностью сохранены)
+// API Endpoints
 router.post("/register", async (ctx) => {
   const { refCode } = ctx.state.body || {};
   const userId = `user_${generateId()}`;
@@ -524,7 +524,7 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   };
 });
 
-// Admin routes (полностью сохранены)
+// Admin routes
 router.post("/admin/login", async (ctx) => {
   const { password } = ctx.state.body || {};
   if (password === CONFIG.ADMIN_PASSWORD) {
@@ -706,12 +706,13 @@ app.use((ctx) => {
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
 
-// Установка вебхука и запуск сервера
-bot.api.setWebHook(`https://ваш-сервер.deno.dev/telegram-webhook`)
-  .then(() => console.log("Telegram webhook установлен"))
-  .catch(console.error);
+// Start bot and server
+const handle = bot.handleUpdate.bind(bot);
 
 await Promise.all([
   app.listen({ port }),
-  bot.start()
+  bot.start({
+    onStart: ({ username }) => console.log(`Bot @${username} started`),
+    drop_pending_updates: true
+  })
 ]);
