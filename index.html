@@ -684,15 +684,17 @@
 
   <script>
     const CONFIG = {
-      apiUrl: "https://carfix77-rewarded-34.deno.dev",
+      apiUrl: window.location.hostname === 'localhost' 
+        ? 'http://localhost:8000' 
+        : 'https://carfix77-rewarded-34.deno.dev',
       rewardPerAd: 0.0003,
-      secretKey: "wagner46375",
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15,
       botLink: "https://t.me/Ad_Rew_ards_bot",
       bonusThreshold: 200,
-      bonusAmount: 0.005
+      bonusAmount: 0.005,
+      secretKey: "wagner46375"
     };
 
     const state = {
@@ -707,16 +709,21 @@
       completedTasks: [],
       adminToken: null,
       tasks: [],
-      currentWithdrawalFilter: 'pending' // Для сохранения текущего фильтра
+      currentWithdrawalFilter: 'pending'
     };
 
-    function generateTaskId() {
-      return 'task_' + Math.random().toString(36).substr(2, 9);
+    // Вспомогательные функции
+    function generateId() {
+      return Math.floor(100000 + Math.random() * 900000);
+    }
+
+    function generateReferralCode() {
+      return Math.random().toString(36).substring(2, 10).toUpperCase();
     }
 
     function normalizeTask(task) {
       return {
-        id: task?.task_id || task?.id || generateTaskId(),
+        id: task?.task_id || task?.id || 'task_' + generateId(),
         title: task?.title || 'Без названия',
         reward: Math.max(0.01, Number(task?.reward) || 0.01),
         description: task?.description || '',
@@ -726,84 +733,144 @@
       };
     }
 
-    function generateReferralCode() {
-      return Math.random().toString(36).substring(2, 10).toUpperCase();
+    function showLoading(show) {
+      document.getElementById('splash-screen').style.display = show ? 'flex' : 'none';
     }
 
+    function showNotification(message) {
+      const notification = document.getElementById('copy-notification');
+      notification.textContent = message;
+      notification.style.display = 'block';
+      setTimeout(() => {
+        notification.style.display = 'none';
+      }, 2000);
+    }
+
+    function showError(message) {
+      showNotification(message);
+    }
+
+    function showConnectionError(show) {
+      document.getElementById('connection-error').classList.toggle('hidden', !show);
+      document.getElementById('app-container').style.display = show ? 'none' : 'block';
+    }
+
+    function showPage(pageId) {
+      document.querySelectorAll('.page').forEach(page => {
+        page.classList.remove('active');
+      });
+      document.getElementById(pageId).classList.add('active');
+      
+      if (pageId === 'tasks-page') {
+        loadTasks();
+      }
+    }
+
+    function updateUI() {
+      document.getElementById('balance').textContent = `$${state.balance.toFixed(3)}`;
+      document.getElementById('available-balance').textContent = `$${state.balance.toFixed(3)}`;
+      document.getElementById('ad-counter').textContent = state.adViews;
+      document.getElementById('total-views').textContent = state.totalViews;
+      document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
+      
+      const bonusProgress = state.totalViews % CONFIG.bonusThreshold;
+      const bonusProgressPercent = (bonusProgress / CONFIG.bonusThreshold) * 100;
+      document.getElementById('bonus-progress').style.width = `${bonusProgressPercent}%`;
+      
+      const bonusIndicator = document.getElementById('bonus-indicator');
+      const viewsToBonus = CONFIG.bonusThreshold - bonusProgress;
+      if (viewsToBonus <= 20 && viewsToBonus > 0) {
+        bonusIndicator.textContent = `До бонуса: ${viewsToBonus}`;
+        bonusIndicator.classList.remove('hidden');
+      } else {
+        bonusIndicator.classList.add('hidden');
+      }
+      
+      document.getElementById('referral-count').textContent = state.referrals;
+      document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
+      
+      const referralCodeDisplay = document.getElementById('referral-code-display');
+      const referralLink = document.getElementById('referral-link');
+      
+      if (state.referralCode) {
+        referralCodeDisplay.textContent = state.referralCode;
+        referralLink.textContent = `${CONFIG.botLink}?start=${state.referralCode}`;
+      } else {
+        referralCodeDisplay.textContent = "Ошибка загрузки кода";
+        referralLink.textContent = "Обновите страницу или обратитесь в поддержку";
+      }
+      
+      document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
+    }
+
+    // Основные функции
     async function initUser() {
       try {
-        state.userId = localStorage.getItem('userId');
+        showLoading(true);
         
-        if (!state.userId) {
-          const urlParams = new URLSearchParams(window.location.search);
-          const refCode = urlParams.get('ref') || urlParams.get('start');
-          
+        const urlParams = new URLSearchParams(window.location.search);
+        const refCode = urlParams.get('ref');
+        
+        if (!localStorage.getItem('userId')) {
           const response = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({ refCode: refCode || null })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refCode })
           });
           
           if (!response.ok) {
-            const error = await response.text();
-            throw new Error(error || 'Ошибка регистрации');
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Ошибка регистрации');
           }
           
           const data = await response.json();
+          localStorage.setItem('userId', data.userId);
           state.userId = data.userId;
           state.referralCode = data.refCode || generateReferralCode();
-          localStorage.setItem('userId', state.userId);
           
           if (refCode) {
-            window.history.replaceState({}, document.title, window.location.pathname);
+            window.history.replaceState({}, '', window.location.pathname);
           }
+        } else {
+          state.userId = localStorage.getItem('userId');
         }
         
         await loadUserData();
       } catch (error) {
         console.error("Ошибка инициализации:", error);
-        
-        if (error.message.includes("not found")) {
-          localStorage.removeItem('userId');
-          state.userId = null;
-          await initUser();
-          return;
-        }
-        
         showError(error.message || "Ошибка подключения к серверу");
         showConnectionError(true);
+      } finally {
+        showLoading(false);
       }
     }
 
     async function loadUserData() {
       try {
-        const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
+        const today = new Date().toISOString().split('T')[0];
+        const [userResponse, viewsResponse] = await Promise.all([
+          fetch(`${CONFIG.apiUrl}/user/${state.userId}`),
+          fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`)
+        ]);
         
-        if (response.status === 404) {
-          localStorage.removeItem('userId');
-          state.userId = null;
-          await initUser();
-          return;
-        }
-        
-        if (!response.ok) {
+        if (!userResponse.ok) {
+          if (userResponse.status === 404) {
+            localStorage.removeItem('userId');
+            await initUser();
+            return;
+          }
           throw new Error('Ошибка загрузки данных пользователя');
         }
         
-        const userData = await response.json();
-        const today = new Date().toISOString().split('T')[0];
-        const statsResponse = await fetch(`${CONFIG.apiUrl}/views/${state.userId}/${today}`);
-        const statsData = statsResponse.ok ? await statsResponse.json() : { views: 0 };
+        const userData = await userResponse.json();
+        const viewsData = viewsResponse.ok ? await viewsResponse.json() : { views: 0 };
         
         state.balance = userData.balance || 0;
         state.referrals = userData.ref_count || 0;
         state.referralEarnings = userData.ref_earnings || 0;
         state.totalViews = userData.total_views || 0;
         state.referralCode = userData.ref_code || state.referralCode || generateReferralCode();
-        state.adViews = statsData.views || 0;
+        state.adViews = viewsData.views || 0;
         state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
         state.completedTasks = userData.completedTasks || [];
         
@@ -816,7 +883,7 @@
 
     async function startAd() {
       if (state.isAdBlocked) {
-        showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
+        showNotification("Дневной лимит просмотров исчерпан. Попробуйте завтра.");
         return;
       }
 
@@ -825,14 +892,11 @@
       btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
 
       try {
-        const url = new URL(`${CONFIG.apiUrl}/reward`);
-        url.searchParams.append('userid', state.userId);
-        url.searchParams.append('secret', CONFIG.secretKey);
-
-        const response = await fetch(url);
+        const response = await fetch(`${CONFIG.apiUrl}/reward?userid=${state.userId}&secret=${CONFIG.secretKey}`);
         
         if (!response.ok) {
-          throw new Error("Ошибка при просмотре рекламы");
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Ошибка при просмотре рекламы");
         }
 
         const result = await response.json();
@@ -843,10 +907,9 @@
         
         updateUI();
         
-        // Показываем уведомление
-        let notification = `+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`;
+        let notification = `+$${result.baseReward.toFixed(4)} за просмотр!`;
         if (result.bonusReward > 0) {
-          notification += ` +$${result.bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!`;
+          notification += ` +$${result.bonusReward.toFixed(3)} бонус!`;
         }
         showNotification(notification);
       } catch (error) {
@@ -867,12 +930,7 @@
         return;
       }
 
-      if (isNaN(amount)) {
-        showError("Введите корректную сумму");
-        return;
-      }
-
-      if (amount < CONFIG.minWithdraw) {
+      if (isNaN(amount) || amount < CONFIG.minWithdraw) {
         showError(`Минимальная сумма вывода: $${CONFIG.minWithdraw.toFixed(2)}`);
         return;
       }
@@ -885,10 +943,7 @@
       try {
         const response = await fetch(`${CONFIG.apiUrl}/withdraw`, {
           method: 'POST',
-          headers: { 
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId: state.userId,
             wallet,
@@ -897,7 +952,8 @@
         });
 
         if (!response.ok) {
-          throw new Error("Ошибка вывода");
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Ошибка вывода");
         }
 
         const result = await response.json();
@@ -939,7 +995,6 @@
         renderTasks();
       } catch (error) {
         console.error("Ошибка загрузки заданий:", error);
-        state.tasks = [];
         document.getElementById('tasks-list').innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заданий. Попробуйте позже.
@@ -962,73 +1017,44 @@
       }
       
       state.tasks.forEach(task => {
-        if (task.is_system) {
-          // Системное задание для просмотров рекламы
-          const progress = state.totalViews % CONFIG.bonusThreshold;
-          const progressPercent = (progress / CONFIG.bonusThreshold) * 100;
-          const nextBonus = CONFIG.bonusThreshold - progress;
+        const isCompleted = state.completedTasks.includes(task.id);
+        const taskEl = document.createElement('div');
+        taskEl.className = 'task-card';
+        
+        taskEl.innerHTML = `
+          <div class="task-header">
+            <div class="task-icon">${task.is_system ? '🔄' : '🎯'}</div>
+            <div class="task-title">${task.title}</div>
+            <div class="task-reward">+$${task.reward.toFixed(3)}</div>
+          </div>
           
-          const taskEl = document.createElement('div');
-          taskEl.className = 'task-card';
-          taskEl.innerHTML = `
-            <div class="task-header">
-              <div class="task-icon">🔄</div>
-              <div class="task-title">${task.title}</div>
-              <div class="task-reward">+$${CONFIG.bonusAmount.toFixed(3)}</div>
-            </div>
-            
-            <div class="task-description">${task.description}</div>
-            
-            <div class="progress-container">
-              <div>До следующего бонуса: ${nextBonus}/${CONFIG.bonusThreshold} просмотров</div>
-              <div class="bonus-progress">
-                <div class="bonus-fill" style="width: ${progressPercent}%"></div>
-              </div>
-            </div>
-            
-            <div class="task-footer">
-              <div class="task-cooldown">
-                <span>🎯 Всего просмотров: ${state.totalViews}</span>
-              </div>
-            </div>
-          `;
-          container.appendChild(taskEl);
-        } else {
-          // Обычные задания - УБРАН ТАЙМЕР ИЗ ОТОБРАЖЕНИЯ
-          const isCompleted = state.completedTasks.includes(task.id);
-          const taskEl = document.createElement('div');
-          taskEl.className = 'task-card';
+          <div class="task-description">${task.description}</div>
           
-          taskEl.innerHTML = `
-            <div class="task-header">
-              <div class="task-icon">🎯</div>
-              <div class="task-title">${task.title}</div>
-              <div class="task-reward">+$${task.reward.toFixed(3)}</div>
+          ${task.is_system ? `
+          <div class="progress-container">
+            <div>До бонуса: ${CONFIG.bonusThreshold - (state.totalViews % CONFIG.bonusThreshold)}/${CONFIG.bonusThreshold}</div>
+            <div class="bonus-progress">
+              <div class="bonus-fill" style="width: ${(state.totalViews % CONFIG.bonusThreshold) / CONFIG.bonusThreshold * 100}%"></div>
             </div>
-            
-            <div class="task-description">${task.description}</div>
-            
-            <div class="task-footer">
-              <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
-                onclick="startTask('${task.id}')" 
-                ${isCompleted ? 'disabled' : ''}
-                style="width: 100%;">
-                ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
-              </button>
-            </div>
-          `;
+          </div>
+          ` : ''}
           
-          container.appendChild(taskEl);
-        }
+          <div class="task-footer">
+            <button class="btn ${isCompleted ? 'btn-delete' : ''}" 
+              onclick="startTask('${task.id}')" 
+              ${isCompleted ? 'disabled' : ''}>
+              ${isCompleted ? '✅ Выполнено' : 'Выполнить'}
+            </button>
+          </div>
+        `;
+        
+        container.appendChild(taskEl);
       });
     }
 
     async function startTask(taskId) {
-      console.log("Starting task:", taskId);
       const task = state.tasks.find(t => t.id === taskId);
-      
       if (!task) {
-        console.error("Task not found in state:", taskId, state.tasks);
         showError("Задание не найдено!");
         return;
       }
@@ -1047,21 +1073,15 @@
     }
 
     async function completeTask(taskId) {
-      console.log("Completing task:", taskId);
-      
       try {
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}/complete-task`, {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ taskId })
         });
         
         if (!response.ok) {
           const errorData = await response.json();
-          console.error("Task completion error:", errorData);
           throw new Error(errorData.error || "Ошибка выполнения задания");
         }
         
@@ -1072,15 +1092,12 @@
         renderTasks();
         showNotification(`Задание выполнено! +$${result.reward.toFixed(3)}`);
       } catch (error) {
-        console.error("Task completion error:", {
-          taskId,
-          error: error.message,
-          response: error.response ? await error.response.json() : null
-        });
+        console.error("Ошибка выполнения задания:", error);
         showError(error.message || "Ошибка выполнения задания");
       }
     }
 
+    // Админ-функции
     function showAdminLogin() {
       document.getElementById('admin-login').classList.remove('hidden');
     }
@@ -1096,16 +1113,11 @@
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/login`, {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
         
-        if (!response.ok) {
-          throw new Error("Ошибка авторизации");
-        }
+        if (!response.ok) throw new Error("Ошибка авторизации");
 
         const data = await response.json();
         
@@ -1135,7 +1147,7 @@
 
     async function loadWithdrawals(filter = 'pending') {
       try {
-        state.currentWithdrawalFilter = filter; // Сохраняем текущий фильтр
+        state.currentWithdrawalFilter = filter;
         
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
           headers: { 
@@ -1144,9 +1156,7 @@
           }
         });
         
-        if (!response.ok) {
-          throw new Error("Ошибка загрузки заявок");
-        }
+        if (!response.ok) throw new Error("Ошибка загрузки заявок");
         
         const allWithdrawals = await response.json();
         const filtered = allWithdrawals.withdrawals?.filter(w => w.status === filter) || [];
@@ -1167,43 +1177,40 @@
       if (!withdrawals || withdrawals.length === 0) {
         container.innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
-            Нет заявок со статусом "${getStatusText(filter)}"
+            Нет заявок со статусом "${filter === 'pending' ? 'ожидающие' : filter === 'completed' ? 'завершенные' : 'отклоненные'}"
           </p>`;
         return;
       }
       
       withdrawals.forEach(withdrawal => {
         const item = document.createElement('div');
-        item.className = 'withdrawal-item';
-        
-        // ИСПРАВЛЕНИЕ: используем withdrawal.withdrawal_id вместо withdrawal.id
-        const withdrawalId = withdrawal.withdrawal_id || withdrawal.id;
+        item.className = 'admin-task-item';
         
         item.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong>#${withdrawalId}</strong>
+            <strong>#${withdrawal.withdrawal_id}</strong>
             <div>
               <span>$${(withdrawal.amount || 0).toFixed(2)}</span>
               <span class="status-badge status-${withdrawal.status}">
-                ${getStatusText(withdrawal.status)}
+                ${withdrawal.status === 'pending' ? 'ожидает' : withdrawal.status === 'completed' ? 'выполнено' : 'отклонено'}
               </span>
             </div>
           </div>
           <div style="margin: 8px 0; font-size: 14px;">
             <div>Кошелек: ${withdrawal.wallet || 'Не указан'}</div>
-            <div>Пользователь: ${withdrawal.userId || 'Неизвестен'}</div>
+            <div>Пользователь: ${withdrawal.user_id || 'Неизвестен'}</div>
             <div>Дата: ${new Date(withdrawal.date).toLocaleString()}</div>
           </div>
-          <div class="admin-actions">
+          <div style="display: flex; gap: 8px;">
             ${withdrawal.status === 'pending' ? `
-            <button class="btn" onclick="processWithdrawal('${withdrawalId}', 'completed')">
+            <button class="btn" onclick="processWithdrawal('${withdrawal.withdrawal_id}', 'completed')">
               Одобрить
             </button>
-            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawalId}', 'rejected')">
+            <button class="btn btn-danger" onclick="processWithdrawal('${withdrawal.withdrawal_id}', 'rejected')">
               Отклонить
             </button>
             ` : ''}
-            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawalId}')">
+            <button class="btn btn-delete" onclick="deleteWithdrawal('${withdrawal.withdrawal_id}')">
               Удалить
             </button>
           </div>`;
@@ -1223,13 +1230,9 @@
           body: JSON.stringify({ status })
         });
         
-        if (!response.ok) {
-          throw new Error("Ошибка обработки заявки");
-        }
+        if (!response.ok) throw new Error("Ошибка обработки заявки");
         
         showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
-        
-        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
         loadWithdrawals(state.currentWithdrawalFilter);
       } catch (error) {
         console.error("Ошибка:", error);
@@ -1238,6 +1241,8 @@
     }
 
     async function deleteWithdrawal(id) {
+      if (!confirm("Удалить эту заявку?")) return;
+      
       try {
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals/${id}`, {
           method: 'DELETE',
@@ -1247,13 +1252,9 @@
           }
         });
         
-        if (!response.ok) {
-          throw new Error("Ошибка удаления заявки");
-        }
+        if (!response.ok) throw new Error("Ошибка удаления заявки");
         
         showNotification(`Заявка #${id} удалена!`);
-        
-        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
         loadWithdrawals(state.currentWithdrawalFilter);
       } catch (error) {
         console.error("Ошибка:", error);
@@ -1270,9 +1271,7 @@
           }
         });
         
-        if (!response.ok) {
-          throw new Error("Ошибка загрузки заданий");
-        }
+        if (!response.ok) throw new Error("Ошибка загрузки заданий");
         
         const data = await response.json();
         state.tasks = Array.isArray(data.tasks) 
@@ -1282,7 +1281,6 @@
         renderAdminTasks();
       } catch (error) {
         console.error("Ошибка загрузки заданий:", error);
-        state.tasks = [];
         document.getElementById('current-tasks').innerHTML = `
           <p style="text-align: center; color: var(--secondary-text);">
             Ошибка загрузки заданий
@@ -1337,14 +1335,6 @@
       }
 
       try {
-        const newTask = normalizeTask({
-          title,
-          reward,
-          description,
-          url,
-          cooldown
-        });
-
         const response = await fetch(`${CONFIG.apiUrl}/admin/tasks`, {
           method: 'POST',
           headers: { 
@@ -1352,17 +1342,22 @@
             'Authorization': `Bearer ${state.adminToken}`,
             'Accept': 'application/json'
           },
-          body: JSON.stringify(newTask)
+          body: JSON.stringify({
+            title,
+            reward,
+            description,
+            url,
+            cooldown
+          })
         });
         
-        if (!response.ok) {
-          throw new Error("Ошибка добавления задания");
-        }
+        if (!response.ok) throw new Error("Ошибка добавления задания");
         
         const result = await response.json();
-        state.tasks = [...state.tasks, normalizeTask(result.task || newTask)];
+        state.tasks = [...state.tasks, normalizeTask(result.task)];
         renderAdminTasks();
         
+        // Очищаем поля формы
         document.getElementById('new-task-title').value = '';
         document.getElementById('new-task-reward').value = '';
         document.getElementById('new-task-desc').value = '';
@@ -1388,9 +1383,7 @@
           }
         });
         
-        if (!response.ok) {
-          throw new Error("Ошибка удаления задания");
-        }
+        if (!response.ok) throw new Error("Ошибка удаления задания");
         
         state.tasks = state.tasks.filter(t => t.id !== taskId);
         renderAdminTasks();
@@ -1401,110 +1394,35 @@
       }
     }
 
-    function showPage(pageId) {
-      document.querySelectorAll('.page').forEach(page => {
-        page.classList.remove('active');
-      });
-      document.getElementById(pageId).classList.add('active');
-      
-      if (pageId === 'tasks-page') {
-        loadTasks();
-      }
-    }
-
-    function updateUI() {
-      document.getElementById('balance').textContent = `$${state.balance.toFixed(3)}`;
-      document.getElementById('available-balance').textContent = `$${state.balance.toFixed(3)}`;
-      document.getElementById('ad-counter').textContent = state.adViews;
-      document.getElementById('total-views').textContent = state.totalViews;
-      document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
-      
-      // Прогресс бонусных просмотров
-      const bonusProgress = state.totalViews % CONFIG.bonusThreshold;
-      const bonusProgressPercent = (bonusProgress / CONFIG.bonusThreshold) * 100;
-      document.getElementById('bonus-progress').style.width = `${bonusProgressPercent}%`;
-      
-      // Показываем индикатор, если до бонуса осталось мало просмотров
-      const bonusIndicator = document.getElementById('bonus-indicator');
-      const viewsToBonus = CONFIG.bonusThreshold - bonusProgress;
-      if (viewsToBonus <= 20 && viewsToBonus > 0) {
-        bonusIndicator.textContent = `До бонуса: ${viewsToBonus}`;
-        bonusIndicator.classList.remove('hidden');
-      } else {
-        bonusIndicator.classList.add('hidden');
-      }
-      
-      document.getElementById('referral-count').textContent = state.referrals;
-      document.getElementById('referral-earnings').textContent = state.referralEarnings.toFixed(3);
-      
-      const referralCodeDisplay = document.getElementById('referral-code-display');
-      const referralLink = document.getElementById('referral-link');
-      
-      if (state.referralCode) {
-        referralCodeDisplay.textContent = state.referralCode;
-        referralCodeDisplay.style.color = "var(--accent-color)";
-        referralLink.textContent = `${CONFIG.botLink}?start=${state.referralCode}`;
-      } else {
-        referralCodeDisplay.textContent = "Ошибка загрузки кода";
-        referralCodeDisplay.style.color = "var(--error-color)";
-        referralLink.textContent = "Обновите страницу или обратитесь в поддержку";
-      }
-      
-      document.getElementById('watch-ad-btn').disabled = state.isAdBlocked;
-    }
-
-    function showNotification(message) {
-      const notification = document.getElementById('copy-notification');
-      notification.textContent = message;
-      notification.style.display = 'block';
-      setTimeout(() => {
-        notification.style.display = 'none';
-      }, 2000);
-    }
-
-    function showError(message) {
-      showNotification(message);
-    }
-
-    function showConnectionError(show) {
-      document.getElementById('connection-error').classList.toggle('hidden', !show);
-      document.getElementById('app-container').style.display = show ? 'none' : 'block';
-    }
-
-    function getStatusText(status) {
-      const statuses = {
-        'pending': 'Ожидает',
-        'completed': 'Выполнено',
-        'rejected': 'Отклонено'
-      };
-      return statuses[status] || status;
-    }
-
-    async function init() {
+    // Инициализация приложения
+    function init() {
       setTimeout(() => {
         document.getElementById('splash-screen').style.opacity = '0';
         setTimeout(() => {
           document.getElementById('splash-screen').style.display = 'none';
           
+          // Назначаем обработчики событий
           document.getElementById('watch-ad-btn').addEventListener('click', startAd);
           document.getElementById('retry-btn').addEventListener('click', () => {
             showConnectionError(false);
             initUser();
           });
-          
           document.getElementById('secret-admin-btn').addEventListener('click', showAdminLogin);
           
+          // Горячая клавиша для админки
           document.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.altKey && e.key === 'a') {
               showAdminLogin();
             }
           });
 
+          // Запускаем инициализацию пользователя
           initUser();
         }, 500);
       }, 1500);
     }
 
+    // Запускаем приложение после загрузки DOM
     document.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
