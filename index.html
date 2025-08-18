@@ -707,7 +707,7 @@
       completedTasks: [],
       adminToken: null,
       tasks: [],
-      currentWithdrawalFilter: 'pending' // Для сохранения текущего фильтра
+      currentWithdrawalFilter: 'pending'
     };
 
     function generateTaskId() {
@@ -732,47 +732,45 @@
 
     async function initUser() {
       try {
-        state.userId = localStorage.getItem('userId');
+        // Получаем userId из параметров URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const userId = urlParams.get('userId');
         
-        if (!state.userId) {
-          const urlParams = new URLSearchParams(window.location.search);
-          const refCode = urlParams.get('ref') || urlParams.get('start');
-          
-          const response = await fetch(`${CONFIG.apiUrl}/register`, {
+        if (!userId) {
+          throw new Error("Telegram ID не найден в URL");
+        }
+        
+        state.userId = userId;
+        
+        // Проверяем, зарегистрирован ли пользователь
+        const userResponse = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
+        
+        if (userResponse.status === 404) {
+          // Если пользователь не найден, регистрируем его
+          const registerResponse = await fetch(`${CONFIG.apiUrl}/register`, {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
               'Accept': 'application/json'
             },
-            body: JSON.stringify({ refCode: refCode || null })
+            body: JSON.stringify({ userId: state.userId })
           });
           
-          if (!response.ok) {
-            const error = await response.text();
-            throw new Error(error || 'Ошибка регистрации');
+          if (!registerResponse.ok) {
+            throw new Error("Ошибка регистрации");
           }
           
-          const data = await response.json();
-          state.userId = data.userId;
-          state.referralCode = data.refCode || generateReferralCode();
-          localStorage.setItem('userId', state.userId);
-          
-          if (refCode) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
+          const registerData = await registerResponse.json();
+          state.referralCode = registerData.refCode || generateReferralCode();
+        } else if (userResponse.ok) {
+          // Если пользователь найден, загружаем его данные
+          const userData = await userResponse.json();
+          state.referralCode = userData.ref_code || generateReferralCode();
         }
         
         await loadUserData();
       } catch (error) {
         console.error("Ошибка инициализации:", error);
-        
-        if (error.message.includes("not found")) {
-          localStorage.removeItem('userId');
-          state.userId = null;
-          await initUser();
-          return;
-        }
-        
         showError(error.message || "Ошибка подключения к серверу");
         showConnectionError(true);
       }
@@ -783,10 +781,7 @@
         const response = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
         
         if (response.status === 404) {
-          localStorage.removeItem('userId');
-          state.userId = null;
-          await initUser();
-          return;
+          throw new Error('Пользователь не найден');
         }
         
         if (!response.ok) {
@@ -994,7 +989,7 @@
           `;
           container.appendChild(taskEl);
         } else {
-          // Обычные задания - УБРАН ТАЙМЕР ИЗ ОТОБРАЖЕНИЯ
+          // Обычные задания
           const isCompleted = state.completedTasks.includes(task.id);
           const taskEl = document.createElement('div');
           taskEl.className = 'task-card';
@@ -1135,7 +1130,7 @@
 
     async function loadWithdrawals(filter = 'pending') {
       try {
-        state.currentWithdrawalFilter = filter; // Сохраняем текущий фильтр
+        state.currentWithdrawalFilter = filter;
         
         const response = await fetch(`${CONFIG.apiUrl}/admin/withdrawals`, {
           headers: { 
@@ -1176,7 +1171,6 @@
         const item = document.createElement('div');
         item.className = 'withdrawal-item';
         
-        // ИСПРАВЛЕНИЕ: используем withdrawal.withdrawal_id вместо withdrawal.id
         const withdrawalId = withdrawal.withdrawal_id || withdrawal.id;
         
         item.innerHTML = `
@@ -1228,8 +1222,6 @@
         }
         
         showNotification(`Заявка #${id} ${status === 'completed' ? 'одобрена' : 'отклонена'}`);
-        
-        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
         loadWithdrawals(state.currentWithdrawalFilter);
       } catch (error) {
         console.error("Ошибка:", error);
@@ -1252,8 +1244,6 @@
         }
         
         showNotification(`Заявка #${id} удалена!`);
-        
-        // ИСПРАВЛЕНИЕ: перезагружаем заявки с текущим фильтром
         loadWithdrawals(state.currentWithdrawalFilter);
       } catch (error) {
         console.error("Ошибка:", error);
@@ -1419,12 +1409,10 @@
       document.getElementById('total-views').textContent = state.totalViews;
       document.getElementById('ad-progress').style.width = `${(state.adViews / CONFIG.dailyLimit) * 100}%`;
       
-      // Прогресс бонусных просмотров
       const bonusProgress = state.totalViews % CONFIG.bonusThreshold;
       const bonusProgressPercent = (bonusProgress / CONFIG.bonusThreshold) * 100;
       document.getElementById('bonus-progress').style.width = `${bonusProgressPercent}%`;
       
-      // Показываем индикатор, если до бонуса осталось мало просмотров
       const bonusIndicator = document.getElementById('bonus-indicator');
       const viewsToBonus = CONFIG.bonusThreshold - bonusProgress;
       if (viewsToBonus <= 20 && viewsToBonus > 0) {
