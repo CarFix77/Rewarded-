@@ -136,7 +136,7 @@ bot.command("start", async (ctx) => {
       inline_keyboard: [
         [{
           text: "Открыть приложение",
-          web_app: { url: `https://ваш-сайт.com?userId=${userId}` }
+          web_app: { url: `https://carfix77.github.io/Rewarded-/?userId=${userId}` }
         }]
       ]
     }
