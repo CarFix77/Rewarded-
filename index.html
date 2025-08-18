@@ -479,6 +479,7 @@
       }
     }
   </style>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <div id="splash-screen">
@@ -710,6 +711,25 @@
       currentWithdrawalFilter: 'pending'
     };
 
+    // Проверяем, запущено ли приложение в Telegram WebView
+    if (window.Telegram && Telegram.WebApp) {
+      Telegram.WebApp.expand();
+      Telegram.WebApp.enableClosingConfirmation();
+      
+      Telegram.WebApp.BackButton.onClick(() => {
+        const pages = ['withdraw-page', 'referral-page', 'tasks-page'];
+        const currentPage = pages.find(page => 
+          document.getElementById(page).classList.contains('active')
+        );
+        
+        if (currentPage) {
+          showPage('main-page');
+        } else {
+          Telegram.WebApp.close();
+        }
+      });
+    }
+
     function generateTaskId() {
       return 'task_' + Math.random().toString(36).substr(2, 9);
     }
@@ -732,15 +752,32 @@
 
     async function initUser() {
       try {
-        // Получаем userId из параметров URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const userId = urlParams.get('userId');
-        
-        if (!userId) {
-          throw new Error("Telegram ID не найден в URL");
+        // Пытаемся получить userId из Telegram WebApp
+        if (window.Telegram && Telegram.WebApp) {
+          const initData = Telegram.WebApp.initData;
+          const initDataUnsafe = Telegram.WebApp.initDataUnsafe;
+          
+          if (initDataUnsafe?.user?.id) {
+            state.userId = `tg_${initDataUnsafe.user.id}`;
+          } else if (initData) {
+            const params = new URLSearchParams(initData);
+            const userJson = params.get('user');
+            if (userJson) {
+              const user = JSON.parse(userJson);
+              state.userId = `tg_${user.id}`;
+            }
+          }
         }
         
-        state.userId = userId;
+        // Если не получили из Telegram, пробуем из URL
+        if (!state.userId) {
+          const urlParams = new URLSearchParams(window.location.search);
+          state.userId = urlParams.get('userId');
+        }
+
+        if (!state.userId) {
+          throw new Error("Не удалось определить ID пользователя");
+        }
         
         // Проверяем, зарегистрирован ли пользователь
         const userResponse = await fetch(`${CONFIG.apiUrl}/user/${state.userId}`);
@@ -1399,6 +1436,15 @@
       
       if (pageId === 'tasks-page') {
         loadTasks();
+      }
+      
+      // Показываем/скрываем кнопку "Назад" в Telegram
+      if (window.Telegram && Telegram.WebApp) {
+        if (pageId === 'main-page') {
+          Telegram.WebApp.BackButton.hide();
+        } else {
+          Telegram.WebApp.BackButton.show();
+        }
       }
     }
 
