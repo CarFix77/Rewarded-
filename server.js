@@ -3,6 +3,7 @@ import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { Bot } from "https://deno.land/x/grammy/mod.ts";
 
+// Конфигурация
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
   SECRET_KEY: "wagner46375",
@@ -15,11 +16,13 @@ const CONFIG = {
   BONUS_AMOUNT: 0.005
 };
 
+// Инициализация Supabase
 const supabase = createClient(
   "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
 );
 
+// Инициализация сервера
 const app = new Application();
 const router = new Router();
 const bot = new Bot("8178465909:AAFaHnIfv1Wyt3PIkT0B64vKEEoJOS9mkt4");
@@ -62,12 +65,14 @@ app.use(async (ctx, next) => {
   await next();
 });
 
+// Вспомогательные функции
 function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
 async function cleanupOldData() {
   try {
+    // Очистка старых данных
     await supabase
       .from("views")
       .delete()
@@ -79,18 +84,10 @@ async function cleanupOldData() {
       .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
       .lt("balance", 0.01);
 
-    if (inactiveUsers && inactiveUsers.length > 0) {
+    if (inactiveUsers?.length > 0) {
       const userIds = inactiveUsers.map(u => u.user_id);
-      
-      await supabase
-        .from("views")
-        .delete()
-        .in("user_id", userIds);
-      
-      await supabase
-        .from("users")
-        .delete()
-        .in("user_id", userIds);
+      await supabase.from("views").delete().in("user_id", userIds);
+      await supabase.from("users").delete().in("user_id", userIds);
     }
 
     await supabase
@@ -136,23 +133,11 @@ bot.command("start", async (ctx) => {
       inline_keyboard: [
         [{
           text: "Открыть приложение",
-          web_app: { url: `https://carfix77.github.io/Rewarded-/?userId=${userId}` }
+          url: `https://carfix77.github.io/Rewarded-/?userId=${userId}`
         }]
       ]
     }
   });
-});
-
-// Webhook handler
-router.post("/telegram-webhook", async (ctx) => {
-  try {
-    const update = await ctx.request.body().value;
-    await bot.handleUpdate(update);
-    ctx.response.status = 200;
-  } catch (err) {
-    console.error("Webhook error:", err);
-    ctx.response.status = 500;
-  }
 });
 
 // API Endpoints
@@ -161,17 +146,15 @@ router.post("/register", async (ctx) => {
   const userId = `user_${generateId()}`;
   const userRefCode = generateId().toString();
 
-  const { error } = await supabase
-    .from("users")
-    .insert({
-      user_id: userId,
-      balance: 0,
-      total_views: 0,
-      ref_code: userRefCode,
-      ref_count: 0,
-      ref_earnings: 0,
-      created_at: new Date().toISOString()
-    });
+  const { error } = await supabase.from("users").insert({
+    user_id: userId,
+    balance: 0,
+    total_views: 0,
+    ref_code: userRefCode,
+    ref_count: 0,
+    ref_earnings: 0,
+    created_at: new Date().toISOString()
+  });
 
   if (error) {
     ctx.response.status = 500;
@@ -188,7 +171,6 @@ router.post("/register", async (ctx) => {
 
     if (referrer) {
       const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-      
       await supabase
         .from("users")
         .update({
@@ -233,8 +215,7 @@ router.all("/reward", async (ctx) => {
   }
 
   const today = new Date().toISOString().split("T")[0];
-  
-  const [{ data: user, error: userError }, { data: viewsData, error: viewsError }] = await Promise.all([
+  const [{ data: user, error: userError }, { data: viewsData }] = await Promise.all([
     supabase.from("users").select("*").eq("user_id", userId).single(),
     supabase.from("views").select("count").eq("user_id", userId).eq("date", today).single()
   ]);
@@ -253,30 +234,18 @@ router.all("/reward", async (ctx) => {
   }
 
   const newTotalViews = (user.total_views || 0) + 1;
-  let bonusReward = 0;
-  
-  if (newTotalViews % CONFIG.BONUS_THRESHOLD === 0) {
-    bonusReward = CONFIG.BONUS_AMOUNT;
-    console.log(`Начисление бонуса за ${CONFIG.BONUS_THRESHOLD} просмотров: $${CONFIG.BONUS_AMOUNT}`);
-  }
-
+  let bonusReward = newTotalViews % CONFIG.BONUS_THRESHOLD === 0 ? CONFIG.BONUS_AMOUNT : 0;
   const totalReward = CONFIG.REWARD_PER_AD + bonusReward;
   const newBalance = user.balance + totalReward;
   
   const { error: viewError } = await supabase
     .from("views")
-    .upsert({
-      user_id: userId,
-      date: today,
-      count: dailyViews + 1
-    }, { onConflict: "user_id,date" });
+    .upsert({ user_id: userId, date: today, count: dailyViews + 1 }, 
+           { onConflict: "user_id,date" });
 
   const { error: userUpdateError } = await supabase
     .from("users")
-    .update({ 
-      balance: newBalance,
-      total_views: newTotalViews 
-    })
+    .update({ balance: newBalance, total_views: newTotalViews })
     .eq("user_id", userId);
 
   if (viewError || userUpdateError) {
@@ -288,8 +257,6 @@ router.all("/reward", async (ctx) => {
   ctx.response.body = {
     success: true,
     reward: totalReward,
-    baseReward: CONFIG.REWARD_PER_AD,
-    bonusReward: bonusReward,
     balance: newBalance,
     viewsToday: dailyViews + 1,
     totalViews: newTotalViews
@@ -422,8 +389,6 @@ router.post("/user/:userId/complete-task", async (ctx) => {
   const userId = ctx.params.userId;
   const { taskId } = ctx.state.body || {};
   
-  console.log(`Complete task request: user=${userId}, task=${taskId}`);
-  
   const { data: user, error: userError } = await supabase
     .from("users")
     .select("*")
@@ -431,14 +396,12 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     .single();
   
   if (userError || !user) {
-    console.error("User not found:", userId);
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "User not found" };
     return;
   }
   
   if (!taskId) {
-    console.error("Task ID missing");
     ctx.response.status = 400;
     ctx.response.body = { success: false, error: "Task ID is required" };
     return;
@@ -453,50 +416,36 @@ router.post("/user/:userId/complete-task", async (ctx) => {
         completed_at: new Date().toISOString()
       });
 
-    if (error) {
-      if (error.code === "23505") {
-        console.log("Task already completed:", taskId);
-        ctx.response.status = 400;
-        ctx.response.body = { success: false, error: "Task already completed" };
-        return;
-      }
-      throw error;
-    }
+    if (error?.code === "23505") {
+      ctx.response.status = 400;
+      ctx.response.body = { success: false, error: "Task already completed" };
+      return;
+    } else if (error) throw error;
   } catch (error) {
-    console.error("Task completion record error:", error);
     ctx.response.status = 500;
-    ctx.response.body = { 
-      success: false, 
-      error: "Failed to record task completion" 
-    };
+    ctx.response.body = { success: false, error: "Failed to record task completion" };
     return;
   }
   
   let task = null;
-  
   const { data: taskData } = await supabase
     .from("tasks")
     .select("*")
     .eq("task_id", taskId)
     .maybeSingle();
 
-  if (taskData) {
-    task = taskData;
-  } 
-  else {
+  if (!taskData) {
     const { data: customTaskData } = await supabase
       .from("custom_tasks")
       .select("*")
       .eq("task_id", taskId)
       .maybeSingle();
-      
-    if (customTaskData) {
-      task = customTaskData;
-    }
+    task = customTaskData;
+  } else {
+    task = taskData;
   }
   
   if (!task) {
-    console.error("Task not found:", taskId);
     ctx.response.status = 404;
     ctx.response.body = { success: false, error: "Task not found" };
     return;
@@ -509,13 +458,10 @@ router.post("/user/:userId/complete-task", async (ctx) => {
     .eq("user_id", userId);
 
   if (balanceError) {
-    console.error("Balance update error:", balanceError);
     ctx.response.status = 500;
     ctx.response.body = { success: false, error: "Balance update failed" };
     return;
   }
-  
-  console.log(`Task completed: user=${userId}, task=${taskId}, reward=$${task.reward}`);
   
   ctx.response.body = {
     success: true,
@@ -685,6 +631,18 @@ router.delete("/admin/custom-tasks/:id", async (ctx) => {
   ctx.response.body = { success: true };
 });
 
+// Webhook handler
+router.post("/telegram-webhook", async (ctx) => {
+  try {
+    const update = await ctx.request.body().value;
+    await bot.handleUpdate(update);
+    ctx.response.status = 200;
+  } catch (err) {
+    console.error("Webhook error:", err);
+    ctx.response.status = 500;
+  }
+});
+
 // Server setup
 router.get("/", (ctx) => {
   ctx.response.body = {
@@ -705,9 +663,6 @@ app.use((ctx) => {
 
 const port = parseInt(Deno.env.get("PORT") || "8000");
 console.log(`Server running on port ${port}`);
-
-// Start bot and server
-const handle = bot.handleUpdate.bind(bot);
 
 await Promise.all([
   app.listen({ port }),
