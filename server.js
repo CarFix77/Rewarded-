@@ -1,11 +1,11 @@
 import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 import { oakCors } from "https://deno.land/x/cors@v1.2.2/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { Bot } from "https://deno.land/x/grammy/mod.ts";
+import { Bot } from "https://deno.land/x/grammy@v1.21.1/mod.ts";
 
 const CONFIG = {
   REWARD_PER_AD: 0.0003,
-  SECRET_KEY: "wagner46375",
+  SECRET_KEY: "wagner1080",
   WEBHOOK_SECRET: "wagner1080",
   DAILY_LIMIT: 30,
   MIN_WITHDRAW: 1.00,
@@ -66,6 +66,52 @@ function generateId() {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
+// Функция обработки рефералов
+async function processReferral(refCode, newUserId) {
+  try {
+    console.log("Processing referral:", refCode, "for new user:", newUserId);
+    
+    const { data: referrer, error: refError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("ref_code", refCode)
+      .single();
+
+    if (refError) {
+      console.error("Error finding referrer:", refError);
+      return false;
+    }
+
+    if (referrer) {
+      const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
+      console.log("Referrer found:", referrer.user_id, "Bonus:", bonus);
+      
+      const { error: updateError } = await supabase
+        .from("users")
+        .update({
+          ref_count: (referrer.ref_count || 0) + 1,
+          ref_earnings: (referrer.ref_earnings || 0) + bonus,
+          balance: (referrer.balance || 0) + bonus
+        })
+        .eq("user_id", referrer.user_id);
+
+      if (updateError) {
+        console.error("Error updating referrer:", updateError);
+        return false;
+      }
+
+      console.log(`Реферал обработан: ${newUserId} -> ${referrer.user_id}, Бонус: $${bonus}`);
+      return true;
+    } else {
+      console.log("Referrer not found for code:", refCode);
+      return false;
+    }
+  } catch (error) {
+    console.error("Ошибка обработки реферала:", error);
+    return false;
+  }
+}
+
 async function cleanupOldData() {
   try {
     await supabase
@@ -108,10 +154,13 @@ async function cleanupOldData() {
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 cleanupOldData();
 
-// Telegram Bot
+// Telegram Bot - ИСПРАВЛЕННЫЙ обработчик start
 bot.command("start", async (ctx) => {
   const userId = `tg_${ctx.from.id}`;
-  const userRefCode = generateId().toString();
+  const startParams = ctx.message.text.split(' ');
+  const refCode = startParams.length > 1 ? startParams[1] : null;
+
+  console.log("New user start:", userId, "Referral code:", refCode);
 
   const { data: existingUser } = await supabase
     .from("users")
@@ -120,7 +169,9 @@ bot.command("start", async (ctx) => {
     .single();
 
   if (!existingUser) {
-    await supabase.from("users").insert({
+    const userRefCode = generateId().toString();
+    
+    const { error: insertError } = await supabase.from("users").insert({
       user_id: userId,
       balance: 0,
       total_views: 0,
@@ -129,6 +180,21 @@ bot.command("start", async (ctx) => {
       ref_earnings: 0,
       created_at: new Date().toISOString()
     });
+
+    if (insertError) {
+      console.error("Error creating user:", insertError);
+      await ctx.reply("❌ Ошибка создания аккаунта. Попробуйте позже.");
+      return;
+    }
+
+    console.log("New user created:", userId, "Ref code:", userRefCode);
+
+    // Обрабатываем реферальный код если есть
+    if (refCode) {
+      await processReferral(refCode, userId);
+    }
+  } else {
+    console.log("Existing user:", userId);
   }
 
   await ctx.reply(`👋 Добро пожаловать! Используйте кнопку ниже для доступа к приложению`, {
@@ -180,24 +246,7 @@ router.post("/register", async (ctx) => {
   }
 
   if (refCode) {
-    const { data: referrer } = await supabase
-      .from("users")
-      .select("*")
-      .eq("ref_code", refCode)
-      .single();
-
-    if (referrer) {
-      const bonus = CONFIG.REWARD_PER_AD * CONFIG.REFERRAL_PERCENT;
-      
-      await supabase
-        .from("users")
-        .update({
-          ref_count: referrer.ref_count + 1,
-          ref_earnings: referrer.ref_earnings + bonus,
-          balance: referrer.balance + bonus
-        })
-        .eq("user_id", referrer.user_id);
-    }
+    await processReferral(refCode, userId);
   }
 
   ctx.response.body = {
