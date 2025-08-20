@@ -480,6 +480,7 @@
     }
   </style>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
 </head>
 <body>
   <div id="splash-screen">
@@ -687,13 +688,14 @@
     const CONFIG = {
       apiUrl: "https://carfix77-rewarded-34.deno.dev",
       rewardPerAd: 0.0003,
-      secretKey: "wagner46375",
+      secretKey: "wagner1080", // Исправлено на wagner1080
       dailyLimit: 30,
       minWithdraw: 1.00,
       referralPercent: 0.15,
       botLink: "https://t.me/Ad_Rew_ards_bot",
       bonusThreshold: 200,
-      bonusAmount: 0.005
+      bonusAmount: 0.005,
+      adsgramBlockId: "YOUR_ADSGRAM_BLOCK_ID" // Замени на свой blockId
     };
 
     const state = {
@@ -708,8 +710,22 @@
       completedTasks: [],
       adminToken: null,
       tasks: [],
-      currentWithdrawalFilter: 'pending'
+      currentWithdrawalFilter: 'pending',
+      AdController: null
     };
+
+    // Инициализация AdsGram
+    function initAdsGram() {
+      try {
+        state.AdController = window.Adsgram.init({
+          blockId: CONFIG.adsgramBlockId,
+          debug: false // В продакшене false
+        });
+        console.log("AdsGram инициализирован");
+      } catch (error) {
+        console.error("Ошибка инициализации AdsGram:", error);
+      }
+    }
 
     // Проверяем, запущено ли приложение в Telegram WebView
     if (window.Telegram && Telegram.WebApp) {
@@ -846,6 +862,30 @@
       }
     }
 
+    async function showAdsGramAd() {
+      if (!state.AdController) {
+        showError("Рекламный модуль не инициализирован");
+        return false;
+      }
+
+      try {
+        const result = await state.AdController.show();
+        
+        if (result.done && !result.error) {
+          // Пользователь досмотрел рекламу до конца
+          return true;
+        } else {
+          // Пользователь пропустил рекламу или произошла ошибка
+          showNotification("Досмотрите рекламу до конца для получения награды");
+          return false;
+        }
+      } catch (error) {
+        console.error("Ошибка показа рекламы:", error);
+        showError("Ошибка загрузки рекламы");
+        return false;
+      }
+    }
+
     async function startAd() {
       if (state.isAdBlocked) {
         showNotification("Вы исчерпали дневной лимит просмотров. Попробуйте завтра.");
@@ -854,33 +894,39 @@
 
       const btn = document.getElementById('watch-ad-btn');
       btn.disabled = true;
-      btn.innerHTML = '<span>⏳</span> Идет показ рекламы...';
+      btn.innerHTML = '<span>⏳</span> Загрузка рекламы...';
 
       try {
-        const url = new URL(`${CONFIG.apiUrl}/reward`);
-        url.searchParams.append('userid', state.userId);
-        url.searchParams.append('secret', CONFIG.secretKey);
+        // Показываем рекламу через AdsGram
+        const adWatched = await showAdsGramAd();
+        
+        if (adWatched) {
+          // Если реклама досмотрена, начисляем награду
+          const url = new URL(`${CONFIG.apiUrl}/reward`);
+          url.searchParams.append('userid', state.userId);
+          url.searchParams.append('secret', CONFIG.secretKey);
 
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-          throw new Error("Ошибка при просмотре рекламы");
-        }
+          const response = await fetch(url);
+          
+          if (!response.ok) {
+            throw new Error("Ошибка при начислении награды");
+          }
 
-        const result = await response.json();
-        state.balance = result.balance;
-        state.adViews = result.viewsToday;
-        state.totalViews = result.totalViews;
-        state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
-        
-        updateUI();
-        
-        // Показываем уведомление
-        let notification = `+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`;
-        if (result.bonusReward > 0) {
-          notification += ` +$${result.bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!`;
+          const result = await response.json();
+          state.balance = result.balance;
+          state.adViews = result.viewsToday;
+          state.totalViews = result.totalViews;
+          state.isAdBlocked = state.adViews >= CONFIG.dailyLimit;
+          
+          updateUI();
+          
+          // Показываем уведомление
+          let notification = `+$${CONFIG.rewardPerAd.toFixed(4)} за просмотр!`;
+          if (result.bonusReward > 0) {
+            notification += ` +$${result.bonusReward.toFixed(3)} бонус за ${CONFIG.bonusThreshold} просмотров!`;
+          }
+          showNotification(notification);
         }
-        showNotification(notification);
       } catch (error) {
         console.error("Ошибка:", error);
         showError(error.message || "Ошибка при просмотре рекламы");
@@ -1385,7 +1431,7 @@
         if (!response.ok) {
           throw new Error("Ошибка добавления задания");
         }
-        
+
         const result = await response.json();
         state.tasks = [...state.tasks, normalizeTask(result.task || newTask)];
         renderAdminTasks();
@@ -1534,6 +1580,8 @@
             }
           });
 
+          // Инициализируем AdsGram и пользователя
+          initAdsGram();
           initUser();
         }, 500);
       }, 1500);
