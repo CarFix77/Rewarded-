@@ -17,7 +17,7 @@ const CONFIG = {
 
 const supabase = createClient(
   "https://ibnxrjoxhjpmkjwzpngw.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhbmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlibnhyam94aGpwbWtqd3pwbmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2NTExNzEsImV4cCI6MjA3MDIyNzE3MX0.9OMEfH5wyakx7iCrZNiw-udkunrdF8kakZRzKvs7Xus"
 );
 
 const app = new Application();
@@ -154,7 +154,7 @@ async function cleanupOldData() {
 setInterval(cleanupOldData, 24 * 60 * 60 * 1000);
 cleanupOldData();
 
-// Telegram Bot - обработчик start
+// Telegram Bot - ИСПРАВЛЕННЫЙ обработчик start
 bot.command("start", async (ctx) => {
   const userId = `tg_${ctx.from.id}`;
   const startParams = ctx.message.text.split(' ');
@@ -257,7 +257,6 @@ router.post("/register", async (ctx) => {
   };
 });
 
-// 🔥 ВАЖНО: Исправленный обработчик reward с поддержкой [userId]
 router.all("/reward", async (ctx) => {
   let userId, secret;
   
@@ -268,21 +267,6 @@ router.all("/reward", async (ctx) => {
   } else {
     userId = ctx.request.url.searchParams.get("userid");
     secret = ctx.request.url.searchParams.get("secret");
-  }
-
-  // 🔥 Поддержка [userId] для AdsGram
-  if (userId === "[userId]") {
-    console.log("AdsGram connection test - returning success");
-    ctx.response.body = {
-      success: true,
-      reward: CONFIG.REWARD_PER_AD,
-      baseReward: CONFIG.REWARD_PER_AD,
-      bonusReward: 0,
-      balance: CONFIG.REWARD_PER_AD,
-      viewsToday: 1,
-      totalViews: 1
-    };
-    return;
   }
 
   if (!userId) {
