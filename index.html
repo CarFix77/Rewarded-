@@ -511,7 +511,7 @@
 
         <div class="progress-container">
           <div class="progress-text">
-            <span>Просмотров: <span id="ad-counter">0</span>/30</span>
+            <span>Просмотров: <span id="ad-counter">0</span>/70</span>
           </div>
           <div class="progress-bar">
             <div class="progress-fill" id="ad-progress"></div>
@@ -688,14 +688,14 @@
     const CONFIG = {
       apiUrl: "https://carfix77-rewarded-34.deno.dev",
       rewardPerAd: 0.0003,
-      secretKey: "wagner1080", // Исправлено на wagner1080
-      dailyLimit: 30,
+      secretKey: "wagner1080",
+      dailyLimit: 70, // Увеличено с 30 до 70
       minWithdraw: 1.00,
       referralPercent: 0.15,
       botLink: "https://t.me/Ad_Rew_ards_bot",
       bonusThreshold: 200,
       bonusAmount: 0.005,
-      adsgramBlockId: "14073" // Замени на свой blockId
+      adsgramBlockId: "14073"
     };
 
     const state = {
@@ -719,7 +719,7 @@
       try {
         state.AdController = window.Adsgram.init({
           blockId: CONFIG.adsgramBlockId,
-          debug: false // В продакшене false
+          debug: false
         });
         console.log("AdsGram инициализирован");
       } catch (error) {
